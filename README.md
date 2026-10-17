@@ -1,0 +1,90 @@
+# Game Price Search
+
+A local Java application for finding PC games and comparing store offers through the **CheapShark API**. Search a title, compare prices, filter offers and save games to revisit in your browser.
+
+## Use the application
+
+Extract the complete Windows portable package, then double-click **`GamePriceSearch.cmd`**. The package includes a Java runtime and opens the interface in your browser; an installed JDK or terminal command is not needed.
+
+1. Search for a game, such as **Portal**.
+2. Select a result to see its current offers and lowest recorded price.
+3. Filter by store or maximum price, then use **View deal** to open the purchase link.
+4. Save games to keep a personal list of up to 50 titles.
+5. Select **Quit app** when finished. Closing the browser tab alone leaves the local server running.
+
+Prices are supplied in **USD**, without currency conversion. The lowest recorded price is historical data from CheapShark, not a prediction. Check the store's current price, regional availability and terms before purchasing.
+
+New lookups require an internet connection. Searches run when requested; recently fetched results can be reused from memory. If a refresh fails, an available older response is shown with its original timestamp and a warning. The price cache is cleared when the app stops.
+
+Saved games use this browser's local storage for this app address. Clearing site data, private browsing or changing the port can remove or separate that list. Saving a game does not enable background price monitoring or email alerts.
+
+## Build and run
+
+Development requirements: **JDK 21** and **Maven 3.9+**.
+
+```sh
+mvn clean verify
+java -jar target/game-price-search-1.0.0.jar --open-browser
+```
+
+The default address is `http://127.0.0.1:8090`. If that port is occupied, the app chooses a free port unless a port was explicitly requested. Use `--port 8090` for a fixed address, or `--help` to list the options.
+
+The server binds to IPv4 loopback and checks local Host/Origin headers. It is intended for one local user. The browser calls the Java backend, which makes read-only requests to CheapShark; no API key or Steam credentials are required.
+
+## Local API and reliability
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/games/search?q=Portal` | Find up to 30 matching titles. |
+| `GET /api/games/game?id=82` | Fetch a game's offers, join store names and sort by price. |
+| `GET /api/games/readiness` | Check local backend readiness without contacting CheapShark. |
+| `GET /api/games/health` | Read the last observed provider result and cache/failure counters. |
+| `POST /api/shutdown` | Stop the application; requires `X-App-Action: change`. |
+
+Provider health starts as `ready`: the app is reachable, but no successful lookup has been observed yet. A successful upstream lookup makes it `healthy`. An observed upstream failure makes it `degraded` with HTTP 503, even when older cached prices remain available. Cache reads do not erase an observed failure. A new successful upstream lookup restores provider health.
+
+These health observations include timestamps; they do not continuously prove that CheapShark is available. Both health routes are local snapshots and never initiate provider requests.
+
+The companion **Service Reliability Monitor** can use its `config/game-price-search.properties` file to monitor local readiness and last-observed provider health. They are two checks of one application. Its recurring probes do not generate game searches or follow purchase links.
+
+The client uses bounded caches and response sizes, a six-second deadline per upstream request, serialized request spacing and cooldowns. HTTP 429 respects `Retry-After`. See [the architecture](docs/architecture.md) for the data flow and limits.
+
+## Windows package
+
+From PowerShell with a full JDK 21 installed:
+
+```powershell
+.\scripts\Package-PortableWindows.ps1 -JavaHome "C:\Program Files\Java\jdk-21" -CreateZip
+```
+
+The script creates a fresh package under `dist/windows/` containing the application JAR, a reduced Java runtime, the CMD launcher, instructions and SHA256 checksums. It excludes source code, local caches and unrelated build output.
+
+To exercise an extracted package through its actual launcher:
+
+```powershell
+python .\scripts\Verify-PortableWindows.py "path\to\extracted\GamePriceSearch"
+```
+
+Python is needed for this development check, not for running the app. The package is an unsigned development build; checksums verify file integrity and are not a trusted publisher signature.
+
+## Verification
+
+`mvn verify` runs deterministic tests with local fake providers for parsing, store joins, decimal ordering, caches, stale fallback, rate limiting, response bounds and HTTP boundaries. The test suite does not depend on the public API being available.
+
+An explicit live integration check is available from the companion monitor repository after both projects have been built:
+
+```sh
+java scripts/VerifyGamePriceIntegration.java ../game-price-search/target/game-price-search-1.0.0.jar
+```
+
+That opt-in check makes real game lookups, observes the local health routes, stops only its own app process and verifies monitor incident/recovery behavior after restarting it. Purchase redirects are not probed.
+
+- [Architecture and reliability decisions](docs/architecture.md)
+
+## Data source and project origin
+
+Prices and store data come from [CheapShark](https://www.cheapshark.com/). The app follows the [API documentation](https://apidocs.cheapshark.com/), including a descriptive User-Agent and the required CheapShark purchase redirect. It performs requested lookups rather than downloading the whole catalog.
+
+The game API integration was first prototyped in a document-search repository. This dedicated project extracts that integration into its own application. Document indexing and file import remain a separate project.
+
+The backend uses Gson for JSON and JUnit for tests. No source license has been selected.

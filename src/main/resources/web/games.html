@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Compare PC game prices from authorised stores, explore current offers and keep a personal shortlist.">
+  <title>Game Price Search — Find your next good deal</title>
+  <link rel="stylesheet" href="/games.css">
+  <script src="/games.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#search-query">Skip to search</a>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Game Price Search home"><span class="brand-mark" aria-hidden="true">g<span>↗</span></span><span>Game Price<span class="brand-sub">Search</span></span></a>
+      <div class="header-actions"><button id="health-button" type="button" class="quiet-button"><span class="status-dot" id="health-dot" aria-hidden="true"></span><span id="health-label">Check connection</span></button><button id="quit-button" type="button" class="quiet-button quit-button">Quit app</button></div>
+    </header>
+    <main id="main-content">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-copy"><p class="eyebrow">PC GAMES · AUTHORISED STORES</p><h1 id="page-title">Good games.<br><span>Better prices.</span></h1><p class="hero-description">Find a game. Compare store offers. Keep the ones worth coming back for.</p></div>
+        <div class="hero-note"><span class="note-label">ONE SEARCH, MORE CHOICE</span><p>Steam, GOG and other authorised PC game stores, with prices supplied by CheapShark.</p><span class="currency-label">All prices in USD</span></div>
+      </section>
+
+      <div class="notice" id="app-notice" role="status" aria-live="polite" hidden></div>
+
+      <section class="search-section" aria-labelledby="search-label">
+        <h2 class="sr-only" id="search-label">Search for PC games</h2>
+        <form id="search-form" role="search">
+          <label class="sr-only" for="search-query">Game title</label>
+          <div class="search-box"><span class="search-symbol" aria-hidden="true">⌕</span><input id="search-query" name="q" type="search" placeholder="Which game are you looking for?" maxlength="120" required autocomplete="off" aria-describedby="search-hint"><button class="primary-button" id="search-button" type="submit">Find games <span aria-hidden="true">↗</span></button></div>
+          <div class="search-bottom"><p id="search-hint">Search by title. No account needed.</p><div class="suggestions" aria-label="Example searches"><span>Try</span><button type="button" data-search="Portal">Portal</button><button type="button" data-search="Hades">Hades</button><button type="button" data-search="Elden Ring">Elden Ring</button></div></div>
+        </form>
+      </section>
+
+      <div class="workspace">
+        <section class="search-area" aria-labelledby="results-title">
+          <div class="section-heading"><div><p class="eyebrow">DISCOVER</p><h2 id="results-title">Find your next game</h2></div><span class="count-pill" id="results-count" hidden></span></div>
+          <p class="section-status" id="search-status" role="status" aria-live="polite">Your search results will appear here.</p>
+          <div class="cache-notice" id="search-cache" hidden></div>
+          <div id="search-results" class="results-list"><div class="empty-state"><span class="empty-mark" aria-hidden="true">↗</span><h3>Start with a game you love.</h3><p>Search its title to compare current offers from participating stores.</p><div class="empty-steps"><span><b>01</b> Find a title</span><span><b>02</b> Compare stores</span><span><b>03</b> Save your favourites</span></div></div></div>
+        </section>
+
+        <aside class="saved-panel" aria-labelledby="saved-title">
+          <div class="section-heading"><div><p class="eyebrow">FOR LATER</p><h2 id="saved-title">Your shortlist</h2></div><span class="count-pill" id="saved-count">0</span></div>
+          <p class="saved-description">A few games to keep an eye on.</p>
+          <ul id="saved-list" class="saved-list" aria-label="Saved games"></ul>
+          <p id="saved-empty" class="saved-empty">Open a game and select <strong>Save game</strong> to keep it here.</p>
+          <p class="storage-note">Saved in this browser. Open a saved game to check its latest offers.</p>
+        </aside>
+      </div>
+
+      <section id="game-detail" class="detail-panel" aria-labelledby="detail-title" hidden tabindex="-1">
+        <div class="detail-top"><div><p class="eyebrow">STORE COMPARISON</p><h2 id="detail-title">Game details</h2></div><div class="detail-actions"><button type="button" id="save-button" class="secondary-button" disabled>Save game</button><button type="button" id="close-detail" class="icon-button" aria-label="Close game details">×</button></div></div>
+        <p id="detail-status" class="section-status" role="status" aria-live="polite"></p>
+        <div class="cache-notice" id="detail-cache" hidden></div>
+        <div id="detail-content" hidden>
+          <div class="detail-summary"><div><span class="summary-label">BEST AVAILABLE OFFER</span><strong id="best-price">—</strong><span id="best-store" class="summary-caption"></span></div><div><span class="summary-label">LOWEST RECORDED PRICE</span><strong id="lowest-price">—</strong><span id="lowest-date" class="summary-caption">Recorded by CheapShark; not a price guarantee.</span></div><div class="summary-info"><span class="summary-label">BEFORE YOU BUY</span><p>Check the store page for activation platform, region restrictions and the final checkout price.</p></div></div>
+          <div class="offer-toolbar"><h3>Compare offers <span id="offer-count"></span></h3><div class="offer-filters"><label for="store-filter">Store <select id="store-filter"><option value="all">All stores</option></select></label><label for="price-filter">Max price <span class="price-input"><span aria-hidden="true">$</span><input id="price-filter" type="number" inputmode="decimal" min="0" max="100000" step="0.01" placeholder="Any" aria-label="Maximum price in USD"><span>USD</span></span></label></div></div>
+          <div class="table-wrap"><table class="offers-table"><caption class="sr-only">Store offers for the selected game. All prices in US dollars.</caption><thead><tr><th scope="col">Store</th><th scope="col">Price <span>USD</span></th><th scope="col">Saving</th><th scope="col"><span class="sr-only">Visit offer</span></th></tr></thead><tbody id="offers-body"></tbody></table></div>
+          <p id="offers-empty" class="offers-empty" hidden>No offers match your filters.</p>
+          <p class="offer-footnote">Offers open on CheapShark and redirect to the store. Listed savings are compared with the store's regular price.</p>
+        </div>
+      </section>
+    </main>
+    <footer><a class="footer-brand" href="https://www.cheapshark.com/" target="_blank" rel="noopener noreferrer">Price data by CheapShark <span aria-hidden="true">↗</span></a><p>Prices are supplied in USD and typically refresh about hourly. Confirm availability and price at checkout.</p><span class="footer-local">YOUR SHORTLIST, ON THIS BROWSER.</span></footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,33 @@
+name: Java verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: Java 21 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify
+        run: mvn --batch-mode --no-transfer-progress clean verify
+      - name: Build portable Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/Package-PortableWindows.ps1 -CreateZip
+      - name: Verify actual Windows launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem dist/windows -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          python ./scripts/Verify-PortableWindows.py (Join-Path $package.FullName 'GamePriceSearch')

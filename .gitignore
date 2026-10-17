@@ -1,0 +1,15 @@
+/target/
+/build/
+/.idea/
+/.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+/data/
+/local-documents/
+/dist/
+.env
+.env.*
+*.log
+__pycache__/
+*.py[cod]
