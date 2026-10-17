@@ -85,6 +85,6 @@ That opt-in check makes real game lookups, observes the local health routes, sto
 
 Prices and store data come from [CheapShark](https://www.cheapshark.com/). The app follows the [API documentation](https://apidocs.cheapshark.com/), including a descriptive User-Agent and the required CheapShark purchase redirect. It performs requested lookups rather than downloading the whole catalog.
 
-The game API integration was first prototyped in a document-search repository. This dedicated project extracts that integration into its own application. Document indexing and file import remain a separate project.
+The game API integration was first prototyped in a document-search repository. That early document-search experiment is now archived locally. The active applications are **Game Price Search** and its companion **Service Reliability Monitor**.
 
 The backend uses Gson for JSON and JUnit for tests. No source license has been selected.
