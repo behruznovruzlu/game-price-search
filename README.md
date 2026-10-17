@@ -14,6 +14,8 @@ Extract the complete Windows portable package, then double-click **`GamePriceSea
 
 Prices are supplied in **USD**, without currency conversion. The lowest recorded price is historical data from CheapShark, not a prediction. Check the store's current price, regional availability and terms before purchasing.
 
+The catalogue may list games under their full names and specific editions; it does not cover every PC game or edition. Common GTA V queries such as `GTA5`, `GTA 5` and `GTA V` are searched as `Grand Theft Auto V`, with the expanded title shown beside the results. Edition names returned by CheapShark are preserved.
+
 New lookups require an internet connection. Searches run when requested; recently fetched results can be reused from memory. If a refresh fails, an available older response is shown with its original timestamp and a warning. The price cache is cleared when the app stops.
 
 Saved games use this browser's local storage for this app address. Clearing site data, private browsing or changing the port can remove or separate that list. Saving a game does not enable background price monitoring or email alerts.

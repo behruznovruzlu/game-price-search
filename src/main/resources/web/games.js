@@ -186,7 +186,7 @@
   function renderResults() {
     ui.results.replaceChildren();
     if (!games.length) {
-      ui.results.append(stateCard("No matching games this time.", "Try a shorter title or check its spelling. This catalogue focuses on PC games."));
+      ui.results.append(stateCard("No matching games this time.", "Try the full game title or check its spelling. Not every PC game or edition is listed."));
       return;
     }
     for (const game of games) {
@@ -253,7 +253,9 @@
       ui.resultsCount.textContent = String(games.length);
       ui.resultsCount.hidden = false;
       const fetched = dateText(data.fetchedAt);
-      ui.searchStatus.textContent = `${games.length} ${games.length === 1 ? "match" : "matches"} shown. Select a game to compare offers.${fetched ? ` Data retrieved ${fetched}.` : ""}`;
+      const resolved = typeof data.resolvedQuery === "string" && data.resolvedQuery !== query
+        ? ` Searched as “${data.resolvedQuery}”.` : "";
+      ui.searchStatus.textContent = `${games.length} ${games.length === 1 ? "match" : "matches"} shown.${resolved} Select a game to compare offers.${fetched ? ` Data retrieved ${fetched}.` : ""}`;
       cacheNote(ui.searchCache, data);
       renderResults();
     } catch (error) {

@@ -41,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 
@@ -51,6 +52,7 @@ public final class GamePriceService implements AutoCloseable {
     private static final int CACHE_CAPACITY = 128;
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(6);
     private static final BigDecimal MAX_PRICE = new BigDecimal("1000000");
+    private static final Pattern GTA_FIVE_ALIAS = Pattern.compile("(?:gta|grand theft auto) ?(?:5|v)", Pattern.CASE_INSENSITIVE);
     private final URI base;
     private final Clock clock;
     private final Duration cacheTtl;
@@ -142,8 +144,9 @@ public final class GamePriceService implements AutoCloseable {
         if (normalized.isEmpty() || normalized.codePointCount(0, normalized.length()) > 120
                 || normalized.codePoints().anyMatch(Character::isISOControl))
             throw invalid("Enter a game title between 1 and 120 characters.");
+        String resolved = GTA_FIVE_ALIAS.matcher(normalized).matches() ? "Grand Theft Auto V" : normalized;
         return locked(() -> cached(searches, normalized, () -> {
-            JsonArray upstream = array(fetch("games?title=" + encode(normalized) + "&limit=30&exact=0"));
+            JsonArray upstream = array(fetch("games?title=" + encode(resolved) + "&limit=30&exact=0"));
             if (upstream.size() > 60) throw malformed();
             JsonArray matches = new JsonArray();
             for (JsonElement element : upstream) {
@@ -158,6 +161,7 @@ public final class GamePriceService implements AutoCloseable {
             }
             JsonObject result = new JsonObject();
             result.addProperty("query", normalized);
+            if (!resolved.equals(normalized)) result.addProperty("resolvedQuery", resolved);
             result.add("games", matches);
             return result;
         }));

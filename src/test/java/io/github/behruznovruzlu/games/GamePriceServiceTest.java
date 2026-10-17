@@ -32,6 +32,10 @@ class GamePriceServiceTest {
     private static final String SEARCH = """
             [{"gameID":"123","steamAppID":"570","external":"Example & Game","cheapest":"9.99","cheapestDealID":"abc%2Fdef%2Bghi%3D"}]
             """;
+    private static final String GTA_SEARCH = """
+            [{"gameID":"456","steamAppID":"123456","external":"Grand Theft Auto V Enhanced","cheapest":"14.99","cheapestDealID":"enhanced"},
+             {"gameID":"457","steamAppID":"123457","external":"Grand Theft Auto V Legacy","cheapest":"9.99","cheapestDealID":"legacy"}]
+            """;
     private static final String STORES = """
             [{"storeID":"1","storeName":"Steam","isActive":1},
              {"storeID":"2","storeName":"GOG","isActive":1},
@@ -90,6 +94,7 @@ class GamePriceServiceTest {
         JsonObject result = json(service.search("  Example & Game  "));
         assertEquals("USD", result.get("currency").getAsString());
         assertEquals("Example & Game", result.get("query").getAsString());
+        assertFalse(result.has("resolvedQuery"));
         assertFalse(result.get("cached").getAsBoolean());
         assertFalse(result.get("stale").getAsBoolean());
         JsonObject game = result.getAsJsonArray("games").get(0).getAsJsonObject();
@@ -100,6 +105,57 @@ class GamePriceServiceTest {
         assertTrue(cached.get("cached").getAsBoolean());
         assertEquals(result.get("fetchedAt"), cached.get("fetchedAt"));
         assertEquals(1, requests.get());
+        assertEquals("healthy", json(service.health()).get("status").getAsString());
+    }
+
+    @Test void resolvesGtaFiveAliasesWithOneRequestAndPreservesTheReturnedEditions() {
+        String expectedQuery = "title=Grand%20Theft%20Auto%20V&limit=30&exact=0";
+        responder.set(exchange -> new Reply(200,
+                exchange.getRequestURI().getRawQuery().equals(expectedQuery) ? GTA_SEARCH : "[]"));
+        List<String> aliases = List.of("gta5", "GTA 5", "gTa V", "Grand Theft Auto 5", "grand theft auto v");
+        for (int index = 0; index < aliases.size(); index++) {
+            String alias = aliases.get(index);
+            JsonObject result = json(service.search(alias));
+            assertEquals(alias, result.get("query").getAsString());
+            assertEquals("Grand Theft Auto V", result.get("resolvedQuery").getAsString());
+            assertEquals(expectedQuery, paths.get(index).getRawQuery());
+            assertEquals(index + 1, requests.get(), "Resolving an alias must not send a second search request.");
+            var editions = result.getAsJsonArray("games");
+            assertEquals(2, editions.size());
+            assertEquals("456", editions.get(0).getAsJsonObject().get("id").getAsString());
+            assertEquals("Grand Theft Auto V Enhanced", editions.get(0).getAsJsonObject().get("title").getAsString());
+            assertEquals("Grand Theft Auto V Legacy", editions.get(1).getAsJsonObject().get("title").getAsString());
+        }
+    }
+
+    @Test void cachesAliasResultsWithoutReplacingTheOriginalQueryOrCanonicalQueryMetadata() {
+        responder.set(exchange -> new Reply(200, GTA_SEARCH));
+        JsonObject first = json(service.search("  GTA5  "));
+        clock.advance(Duration.ofMinutes(2));
+        JsonObject canonical = json(service.search("Grand Theft Auto V"));
+        assertEquals("Grand Theft Auto V", canonical.get("query").getAsString());
+        assertFalse(canonical.has("resolvedQuery"));
+        JsonObject cached = json(service.search("GTA5"));
+        assertEquals("GTA5", cached.get("query").getAsString());
+        assertEquals("Grand Theft Auto V", cached.get("resolvedQuery").getAsString());
+        assertTrue(cached.get("cached").getAsBoolean());
+        assertEquals(first.get("fetchedAt"), cached.get("fetchedAt"));
+        assertEquals(2, requests.get(), "Repeating the alias uses its cached result, preserving its original query.");
+    }
+
+    @Test void leavesOtherTitlesAndAliasSubstringsUnchangedWithoutFallbackRequests() {
+        responder.set(exchange -> new Reply(200, "[]"));
+        List<String> queries = List.of("GTA5 mods", "GTA 50", "GTA V: Another Title", "My GTA5 Adventure",
+                "GTA IV", "GTA", "Grand Theft Auto VI", "Hades");
+        for (int index = 0; index < queries.size(); index++) {
+            String query = queries.get(index);
+            JsonObject result = json(service.search(query));
+            assertEquals(query, result.get("query").getAsString());
+            assertFalse(result.has("resolvedQuery"));
+            assertEquals("title=" + query + "&limit=30&exact=0", paths.get(index).getQuery());
+            assertEquals(0, result.getAsJsonArray("games").size());
+            assertEquals(index + 1, requests.get(), "An empty catalogue result must not trigger guessed follow-up searches.");
+        }
         assertEquals("healthy", json(service.health()).get("status").getAsString());
     }
 
@@ -139,9 +195,10 @@ class GamePriceServiceTest {
 
     @Test void respectsRetryAfterAndDoesNotStormTheUpstream() {
         responder.set(exchange -> new Reply(429, "rate limited", Map.of("Retry-After", "17")));
-        var limited = assertThrows(GamePriceService.ServiceException.class, () -> service.search("Example"));
+        var limited = assertThrows(GamePriceService.ServiceException.class, () -> service.search("GTA5"));
         assertEquals(503, limited.status());
         assertEquals(17, limited.retryAfterSeconds());
+        assertEquals("title=Grand%20Theft%20Auto%20V&limit=30&exact=0", paths.getFirst().getRawQuery());
         for (int attempt = 0; attempt < 5; attempt++)
             assertThrows(GamePriceService.ServiceException.class, () -> service.search("Other"));
         assertEquals(1, requests.get());
@@ -173,7 +230,7 @@ class GamePriceServiceTest {
     }
 
     @Test void validatesInputBeforeContactingTheNetwork() {
-        for (String query : List.of("", " ", "x".repeat(121), "a\u0000b"))
+        for (String query : List.of("", " ", "x".repeat(121), "a\u0000b", "gta\u00005"))
             assertEquals(400, assertThrows(GamePriceService.ServiceException.class, () -> service.search(query)).status());
         for (String id : List.of("", "0", "-1", "1&title=other", "https://other.example"))
             assertEquals(400, assertThrows(GamePriceService.ServiceException.class, () -> service.game(id)).status());
