@@ -1,6 +1,6 @@
 # Game Price Search
 
-A local Java application for finding PC games and comparing store offers through the **CheapShark API**. Search a title, compare prices, filter offers and track target prices in a persistent watchlist.
+A local Java application for finding PC games and comparing store offers through the **CheapShark API**. Search a title, discover discounted games, compare prices and track target prices in a persistent watchlist.
 
 ## Use the application
 
@@ -14,6 +14,14 @@ Extract the complete Windows portable package, then double-click **`GamePriceSea
 6. Select **Quit app** when finished. Closing the browser tab alone leaves the local server running.
 
 Prices are supplied in **USD**, without currency conversion. The lowest recorded price is historical data from CheapShark, not a prediction. Check the store's current price, regional availability and terms before purchasing.
+
+### Discover deals
+
+Select **Discover deals** to open the separate `/deals` page. Browse discounted store offers without entering a game title. Choose a maximum price in USD, an active store and an order: deal rating, discount, price or recent offers. Apply those choices to request one page, then use the previous/next controls to browse further. **Compare & watch** opens that game's offers on the search page; it does not add or change a price target automatically.
+
+Each provider page contains up to 30 store offers, rather than 30 unique games. One game can appear at several stores. The application removes inactive stores and offers outside the exact selected budget while retaining the provider's order. The minimum-discount control filters only the current fetched page and does not query the full catalogue.
+
+The next-page control is a continuation hint based on whether the provider returned a full page, not a total-result count or a guarantee of another matching offer. A page can be empty after filtering and still have a next page. Discovery runs on request; it does not download the catalogue or automatically follow purchase links. Cached or stale pages display their original observation time and any refresh warning.
 
 The catalogue may list games under their full names and specific editions; it does not cover every PC game or edition. Common GTA V queries such as `GTA5`, `GTA 5` and `GTA V` are searched as `Grand Theft Auto V`, with the expanded title shown beside the results. Edition names returned by CheapShark are preserved.
 
@@ -44,6 +52,8 @@ The server binds to IPv4 loopback and checks local Host/Origin headers. It is in
 | --- | --- |
 | `GET /api/games/search?q=Portal` | Find up to 30 matching titles. |
 | `GET /api/games/game?id=82` | Fetch a game's offers, join store names and sort by price. |
+| `GET /api/deals?maxPrice=10&storeId=1&sort=rating&page=0` | Browse one filtered, provider-ordered page of discounted offers. |
+| `GET /api/stores` | Read the validated active-store choices, reusing the store metadata cache. |
 | `GET /api/games/readiness` | Check local backend readiness without contacting CheapShark. |
 | `GET /api/games/health` | Read the last observed provider result and cache/failure counters. |
 | `GET /api/games/workflow` | Read the latest opt-in search-and-offers validation; HTTP 200 only for a recent passing check. |
@@ -56,7 +66,9 @@ The server binds to IPv4 loopback and checks local Host/Origin headers. It is in
 
 Watchlist mutations require `Content-Type: application/json` and `X-App-Action: change`, reject unknown fields, and retain the same Host/Origin protections as shutdown. Saving a target alone does not query the provider. The UI explicitly requests a check after a user adds or edits a target; list polling is local. Price checks share the existing caches, request spacing and rate-limit cooldowns. The JSON state is size-limited and atomically replaced; write failures remain visible and do not discard the last persisted state.
 
-Provider health starts as `ready`: the app is reachable, but no successful lookup has been observed yet. A successful upstream lookup makes it `healthy`. An observed upstream failure makes it `degraded` with HTTP 503, even when older cached prices remain available. Cache reads do not erase an observed failure. A new successful upstream lookup restores provider health.
+The discovery route accepts an optional maximum USD price from 0 to 1,000,000 with at most two decimal places, an optional numeric store ID, `sort=rating|discount|price|recent` and a zero-based page from 0 to 1000. The minimum-discount display filter is not an API parameter. Deal pages share provider request spacing and cooldowns and have a separate bounded 15-minute cache keyed by the normalized price, store, order and page. No price target or watchlist state is included in a discovery request.
+
+Provider health starts as `ready`: the app is reachable, but no successful lookup has been observed yet. A successful upstream lookup makes it `healthy`. An observed upstream failure makes it `degraded` with HTTP 503, even when older cached prices remain available. Cache reads do not erase an observed failure. A new successful upstream lookup restores provider health. Discovery and store-metadata lookups contribute to these provider observations; a successful store lookup alone does not establish that a game-search workflow passes.
 
 These health observations include timestamps; they do not continuously prove that CheapShark is available. Both health routes are local snapshots and never initiate provider requests.
 

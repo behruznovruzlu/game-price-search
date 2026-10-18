@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Discover PC game deals from authorised stores. Browse discounted games by budget, store and deal rating, then compare offers or watch a price.">
+  <title>Discover deals — Game Price Search</title>
+  <link rel="stylesheet" href="/games.css">
+  <link rel="stylesheet" href="/deals.css">
+  <script src="/deals.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#deal-filters">Skip to deal filters</a>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Game Price Search home"><span class="brand-mark" aria-hidden="true">g<span>↗</span></span><span>Game Price<span class="brand-sub">Search</span></span></a>
+      <div class="header-actions"><a class="watchlist-link" href="/#saved-title">Your watchlist <span aria-hidden="true">↗</span></a><button id="quit-button" type="button" class="quiet-button quit-button">Quit app</button></div>
+    </header>
+    <nav class="primary-nav" aria-label="Main navigation"><a href="/">Search games</a><a href="/deals" aria-current="page">Discover deals <span aria-hidden="true">↗</span></a></nav>
+    <main>
+      <section class="hero deals-hero" aria-labelledby="page-title">
+        <div class="hero-copy"><p class="eyebrow">FIND SOMETHING WORTH PLAYING</p><h1 id="page-title">Your next game.<br><span>A little less.</span></h1><p class="hero-description">No title in mind? Explore current discounts, find a store offer and compare before you buy.</p></div>
+        <div class="hero-note"><span class="note-label">A BUDGET, A NEW FAVOURITE</span><p>Discounted PC games from participating authorised stores. Different editions and stores may appear separately.</p><span class="currency-label">All prices in USD</span></div>
+      </section>
+
+      <div class="notice" id="app-notice" role="status" aria-live="polite" hidden></div>
+
+      <section class="discovery-filters" aria-labelledby="filters-title">
+        <div class="filters-heading"><h2 id="filters-title">Make it your kind of deal.</h2><p>Choose a budget or leave it open.</p></div>
+        <form id="deal-filters">
+          <div class="filter-field"><label for="max-price">Maximum price</label><span class="price-input"><span aria-hidden="true">$</span><input id="max-price" name="maxPrice" type="number" inputmode="decimal" min="0" max="1000000" step="0.01" value="10" placeholder="Any price" aria-describedby="price-hint"><span>USD</span></span><span id="price-hint" class="field-hint">Leave blank for any price.</span></div>
+          <div class="filter-field"><label for="deal-store">Store</label><select id="deal-store" name="storeId" aria-describedby="store-status"><option value="">All participating stores</option></select><span id="store-status" class="field-hint">Loading stores…</span></div>
+          <div class="filter-field"><label for="deal-sort">Sort by</label><select id="deal-sort" name="sort"><option value="rating">Deal rating</option><option value="discount">Biggest discount</option><option value="price">Lowest price</option><option value="recent">Most recent</option></select><span class="field-hint">Deal ratings are supplied by CheapShark.</span></div>
+          <button id="browse-button" class="primary-button" type="submit">Find deals <span aria-hidden="true">↗</span></button>
+        </form>
+        <div id="store-warning" class="store-warning" hidden><span id="store-warning-copy"></span><button id="store-retry" class="retry-button" type="button">Retry stores</button></div>
+      </section>
+
+      <section class="discovery-results" aria-labelledby="deals-title">
+        <div class="deals-heading"><div class="section-heading"><div><p class="eyebrow">A LITTLE DISCOVERY</p><h2 id="deals-title">Current offers</h2></div><span id="deals-count" class="count-pill" hidden></span></div><div class="page-filter"><label for="min-discount">On this page</label><select id="min-discount" aria-describedby="page-filter-hint"><option value="0">Any discount</option><option value="25">25% off or more</option><option value="50">50% off or more</option><option value="75">75% off or more</option><option value="90">90% off or more</option></select></div></div>
+        <p id="page-filter-hint" class="page-filter-hint">The discount filter narrows this loaded page of up to 30 offers. It does not filter the entire catalogue.</p>
+        <p id="deals-status" class="section-status" role="status" aria-live="polite">Finding current store offers…</p>
+        <div id="deals-cache" class="cache-notice" hidden></div>
+        <div id="deals-grid" class="deals-grid" aria-busy="true"></div>
+        <nav id="deal-pagination" class="deal-pagination" aria-label="Deal result pages" hidden><button id="previous-page" class="secondary-button" type="button" disabled><span aria-hidden="true">←</span> Previous page</button><div><span id="page-position">Page 1</span><p id="page-note">Up to 30 store offers per page.</p></div><button id="next-page" class="secondary-button" type="button" disabled>Next page <span aria-hidden="true">→</span></button></nav>
+        <p class="discovery-note">Listings can change as you browse. Compare the edition, activation platform and region restrictions on the store page. A listed discount is based on that store’s regular price.</p>
+      </section>
+    </main>
+    <footer><a class="footer-brand" href="https://www.cheapshark.com/" target="_blank" rel="noopener noreferrer">Price data by CheapShark <span aria-hidden="true">↗</span></a><p>Prices are supplied in USD and typically refresh about hourly. Confirm availability and price at checkout.</p><span class="footer-local">DISCOVER. COMPARE. WATCH.</span></footer>
+  </div>
+</body>
+</html>

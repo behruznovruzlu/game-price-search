@@ -60,7 +60,7 @@ class GameServerTest {
 
     @Test void servesOnlyBundledGameResourcesAndRejectsTraversalAndOtherHostnames() throws Exception {
         try (var fixture = new Fixture(false)) {
-            for (String path : List.of("/", "/games", "/games.js", "/games.css")) {
+            for (String path : List.of("/", "/games", "/games.js", "/games.css", "/deals", "/deals.js", "/deals.css", "/?game=123")) {
                 var response = fixture.get(path);
                 assertEquals(200, response.statusCode(), path);
                 assertEquals("nosniff", response.headers().firstValue("X-Content-Type-Options").orElseThrow());
@@ -79,6 +79,44 @@ class GameServerTest {
                 String response = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
                 assertTrue(response.startsWith("HTTP/1.1 403"), response);
             }
+        }
+    }
+
+    @Test void validatesDiscoveryFiltersAndGameLinksBeforeAnyProviderRequest() throws Exception {
+        try (var fixture = new Fixture(false)) {
+            for (String query : List.of("maxPrice=-1", "maxPrice=NaN", "maxPrice=1e2", "maxPrice=0.001",
+                    "maxPrice=1000000.01", "maxPrice=1&maxPrice=2", "maxPrice=2&extra=x",
+                    "storeId=../stores", "storeId=0", "storeId=1&storeId=2", "sort=Title",
+                    "page=-1", "page=1.0", "page=1001", "page=2147483648", "page=1&page=2"))
+                assertEquals(400, fixture.get("/api/deals?" + query).statusCode(), query);
+            for (String path : List.of("/api/stores?extra=x", "/deals?game=123", "/deals.js?game=123",
+                    "/?game=", "/?game=0", "/?game=../stores", "/?game=1&game=2", "/?game=1&targetPrice=5"))
+                assertEquals(400, fixture.get(path).statusCode(), path);
+            assertEquals(0, fixture.calls.get(), "Invalid filters and static game links must remain local");
+        }
+    }
+
+    @Test void exposesDiscoveryPagesAndCompareLinksWithoutChangingWatchTargets() throws Exception {
+        try (var fixture = new Fixture(false, temporary)) {
+            assertEquals(200, fixture.post("/api/watchlist", "{\"id\":\"123\",\"title\":\"Example & Game\",\"targetPrice\":5}").statusCode());
+            var stores = fixture.get("/api/stores");
+            assertEquals(200, stores.statusCode());
+            assertEquals("Steam", JsonParser.parseString(stores.body()).getAsJsonObject().getAsJsonArray("stores").get(0).getAsJsonObject().get("name").getAsString());
+            var response = fixture.get("/api/deals?maxPrice=10&storeId=1&sort=discount&page=0");
+            assertEquals(200, response.statusCode());
+            var page = JsonParser.parseString(response.body()).getAsJsonObject();
+            assertEquals(30, page.get("pageSize").getAsInt());
+            assertFalse(page.get("hasMore").getAsBoolean());
+            var offer = page.getAsJsonArray("deals").get(0).getAsJsonObject();
+            assertEquals("123", offer.get("id").getAsString());
+            assertEquals("Steam", offer.get("storeName").getAsString());
+            assertEquals(200, fixture.get("/?game=123").statusCode());
+            assertEquals(200, fixture.get("/api/games/game?id=123").statusCode());
+            var watched = JsonParser.parseString(fixture.get("/api/watchlist").body()).getAsJsonObject().getAsJsonArray("items").get(0).getAsJsonObject();
+            assertEquals(5, watched.get("targetPrice").getAsInt(), "Opening a discovered game must not change the watch target");
+            int calls = fixture.calls.get();
+            assertTrue(JsonParser.parseString(fixture.get("/api/deals?maxPrice=10.00&storeId=1&sort=discount&page=0").body()).getAsJsonObject().get("cached").getAsBoolean());
+            assertEquals(calls, fixture.calls.get(), "Equivalent budget spelling reuses the page cache");
         }
     }
 
@@ -254,6 +292,8 @@ class GameServerTest {
                 if (failure) body = "{\"error\":\"temporarily unavailable\"}";
                 else if (exchange.getRequestURI().getPath().endsWith("stores"))
                     body = "[{\"storeID\":\"1\",\"storeName\":\"Steam\",\"isActive\":1}]";
+                else if (exchange.getRequestURI().getPath().endsWith("deals"))
+                    body = "[{\"gameID\":\"123\",\"title\":\"Example & Game\",\"steamAppID\":\"570\",\"storeID\":\"1\",\"dealID\":\"offer\",\"salePrice\":\"9.99\",\"normalPrice\":\"19.99\",\"isOnSale\":\"1\",\"savings\":\"50\",\"dealRating\":\"9.0\"}]";
                 else if (exchange.getRequestURI().getQuery().startsWith("id="))
                     body = "{\"info\":{\"title\":\"Example & Game\",\"steamAppID\":\"570\"},\"cheapestPriceEver\":{\"price\":\"4.99\",\"date\":1704067200},\"deals\":[{\"storeID\":\"1\",\"dealID\":\"offer\",\"price\":\"9.99\",\"retailPrice\":\"19.99\",\"savings\":\"50\"}]}";
                 else body = "[{\"gameID\":\"123\",\"steamAppID\":\"570\",\"external\":\"Example & Game\",\"cheapest\":\"9.99\",\"cheapestDealID\":\"offer\"}]";

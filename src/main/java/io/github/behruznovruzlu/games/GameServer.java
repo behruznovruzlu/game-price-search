@@ -113,10 +113,13 @@ public final class GameServer implements AutoCloseable {
                     send(exchange, 405, "application/json", "{\"error\":\"Unsupported method\"}");
                 } else {
                     switch (path) {
-                        case "/", "/games" -> resource(exchange, "/web/games.html", "text/html");
+                        case "/", "/games" -> resource(exchange, "/web/games.html", "text/html", true);
+                        case "/deals" -> resource(exchange, "/web/deals.html", "text/html");
                         case "/games.js" -> resource(exchange, "/web/games.js", "text/javascript");
                         case "/games.css" -> resource(exchange, "/web/games.css", "text/css");
-                        case "/api/games/search", "/api/games/game", "/api/games/health" -> gameRequest(exchange, path);
+                        case "/deals.js" -> resource(exchange, "/web/deals.js", "text/javascript");
+                        case "/deals.css" -> resource(exchange, "/web/deals.css", "text/css");
+                        case "/api/games/search", "/api/games/game", "/api/games/health", "/api/deals", "/api/stores" -> gameRequest(exchange, path);
                         case "/api/games/workflow" -> {
                             parameters(exchange.getRequestURI().getRawQuery(), List.of());
                             String body = workflow == null ? "{\"status\":\"disabled\",\"running\":false,\"query\":\"Portal\",\"error\":null}"
@@ -216,6 +219,23 @@ public final class GameServer implements AutoCloseable {
 
     private void gameRequest(HttpExchange exchange, String path) throws IOException {
         try {
+            if (path.equals("/api/deals")) {
+                var input = parameters(exchange.getRequestURI().getRawQuery(), List.of("maxPrice", "storeId", "sort", "page"));
+                String price = input.getOrDefault("maxPrice", "");
+                if (!price.isEmpty() && !price.matches("[0-9]{1,7}(?:\\.[0-9]{1,2})?"))
+                    throw new IllegalArgumentException("Maximum price must be a USD amount with at most two decimal places");
+                String page = input.getOrDefault("page", "0");
+                if (!page.matches("[0-9]{1,4}")) throw new IllegalArgumentException("Page must be between 0 and 1000");
+                String body = games.deals(price.isEmpty() ? null : new BigDecimal(price), input.get("storeId"),
+                        input.getOrDefault("sort", "rating"), Integer.parseInt(page));
+                send(exchange, 200, "application/json", body);
+                return;
+            }
+            if (path.equals("/api/stores")) {
+                parameters(exchange.getRequestURI().getRawQuery(), List.of());
+                send(exchange, 200, "application/json", games.stores());
+                return;
+            }
             if (path.equals("/api/games/health")) {
                 parameters(exchange.getRequestURI().getRawQuery(), List.of());
                 String body = games.health();
@@ -256,7 +276,13 @@ public final class GameServer implements AutoCloseable {
     }
 
     private static void resource(HttpExchange exchange, String resource, String type) throws IOException {
-        parameters(exchange.getRequestURI().getRawQuery(), List.of());
+        resource(exchange, resource, type, false);
+    }
+
+    private static void resource(HttpExchange exchange, String resource, String type, boolean gameLink) throws IOException {
+        var query = parameters(exchange.getRequestURI().getRawQuery(), gameLink ? List.of("game") : List.of());
+        if (query.containsKey("game") && !query.get("game").matches("[1-9][0-9]{0,19}"))
+            throw new IllegalArgumentException("Game ID must be a positive numeric identifier");
         try (var input = GameServer.class.getResourceAsStream(resource)) {
             if (input == null) {
                 send(exchange, 500, "application/json", "{\"error\":\"Missing application resource\"}");

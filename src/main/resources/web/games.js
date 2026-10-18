@@ -781,5 +781,9 @@
   renderSaved();
   loadWatchlist();
   loadWorkflow();
+  const linkedGame = new URLSearchParams(location.search);
+  if (linkedGame.size === 1 && linkedGame.has("game") && validId(linkedGame.get("game"))) {
+    openGame({id: linkedGame.get("game"), title: "Selected game"}, null);
+  }
   watchTimer = setInterval(() => { loadWatchlist(); loadWorkflow(); }, 5000);
 })();

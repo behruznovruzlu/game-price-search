@@ -135,6 +135,10 @@ class PortableSmoke:
         self.assert_no_upstream()
         for path, content_type, marker in (
                 ("/", "text/html", "Game Price Search"),
+                ("/?game=123", "text/html", "Game Price Search"),
+                ("/deals", "text/html", "Discover deals"),
+                ("/deals.js", "text/javascript", ""),
+                ("/deals.css", "text/css", ""),
                 ("/games.js", "text/javascript", ""),
                 ("/games.css", "text/css", "")):
             status, headers, content = self.request(path)
@@ -150,7 +154,10 @@ class PortableSmoke:
                     "Missing application content security policy")
         for path in ("/api/games/search", "/api/games/search?q=", "/api/games/search?q=%20",
                      "/api/games/search?q=Hades&q=Portal", "/api/games/search?q=Hades&extra=1",
-                     "/api/games/game?id=invalid", "/api/games/game"):
+                     "/api/games/game?id=invalid", "/api/games/game",
+                     "/api/deals?maxPrice=-1", "/api/deals?maxPrice=1e2", "/api/deals?sort=invalid",
+                     "/api/deals?page=1001", "/api/deals?storeId=0", "/api/stores?extra=1",
+                     "/?game=0", "/?game=1&game=2", "/deals?game=1"):
             require(self.json(path)[0] == 400, f"Invalid input was accepted: {path}")
         for path in ("/documents", "/api/documents", "/api/search?q=linux"):
             require(self.request(path)[0] == 404, f"Unexpected unrelated route: {path}")

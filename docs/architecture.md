@@ -1,6 +1,6 @@
 # Architecture
 
-Game Price Search is a local, single-user application. Java serves a browser interface, translates game lookups into read-only CheapShark requests and returns validated results. It does not build a local game catalog or index document contents.
+Game Price Search is a local, single-user application. Java serves search and deal-discovery browser pages, translates their lookups into read-only CheapShark requests and returns validated results. It does not build a local game catalog or index document contents.
 
 ## Components and request flow
 
@@ -21,13 +21,28 @@ flowchart LR
 ```
 
 - `Main` handles the port, data directory, optional browser launch and process lifecycle.
-- `GameServer` serves the three web assets and validates HTTP methods, input and the local request boundary.
+- `GameServer` serves the search and discovery pages and their local assets, and validates HTTP methods, input and the local request boundary.
 - `GamePriceService` owns provider requests, JSON validation, store joins, caching and observed provider health.
 - `WatchlistService` owns up to 50 persisted games, optional price targets, periodic checks and in-app alert state.
 - `PriceWorkflowCheck` validates a fixed real search and its offers on a separate bounded schedule when enabled.
 - `games.js` renders results, filters returned offers and polls the local watchlist snapshot every five seconds. This UI polling does not query CheapShark.
+- `deals.js` requests individual discovery pages, renders store offers and applies a minimum-discount filter to the current page. The discovery page shares `games.css` and adds `deals.css`.
 
 A title search calls `games?title=...&limit=30&exact=0` on the fixed CheapShark API origin. Selecting a numeric game ID loads its details and store metadata. The service joins store IDs to names, excludes inactive stores and sorts offers with `BigDecimal` prices and deterministic ties. Store and maximum-price filters operate on those returned offers in the browser.
+
+## Separate deal discovery
+
+`GET /deals` serves the discovery page, with `/deals.js`, `/deals.css` and the shared `/games.css`. Its `GET /api/deals` request accepts `maxPrice`, `storeId`, `sort` and `page`. Sort values are allowlisted as `rating`, `discount`, `price` and `recent`, and map to fixed CheapShark ordering parameters. Page numbers are zero-based and capped at 1000; one request asks for at most 30 on-sale store offers. The route does not fetch multiple pages to fill a result grid.
+
+The maximum price is optional and, when supplied, must be between 0 and 1,000,000 USD with at most two decimal places. The provider's upper-price parameter is only a coarse filter: an exact `BigDecimal` comparison after fetching enforces the selected budget, including a zero-dollar cap. Each offer is joined to validated store metadata. Inactive stores, offers from a different selected store, non-sale offers and offers whose sale price is not below their regular price are excluded. The surviving offers retain their order within the provider page; the application does not claim to establish a new global order across pages.
+
+The response contains `page`, `pageSize`, `hasMore`, `deals` and the usual currency/cache metadata. Each deal has `id` (game ID), `title`, `steamAppId`, `storeId`, `storeName`, `salePrice`, `normalPrice`, `savings`, `dealRating` and `dealUrl`. Offers are store records, so one game can appear more than once. `hasMore` is true when the raw provider page contained 30 offers, before local filtering. It is a continuation hint, not a provider total or a guarantee that another matching offer exists. Filtered or empty pages can still have a next page.
+
+`GET /api/stores` returns only active stores from the same validated, 24-hour metadata cache used for game details and discovery. It retains the original fetch time and marks an older cached store list stale when a refresh fails. Choosing a store does not initiate a request per offer.
+
+The minimum-discount control is a browser-only filter on the current page; its label makes that scope explicit. Changing the provider filters starts again at page zero. The interface rejects superseded fetch responses so an earlier page cannot overwrite the latest chosen filters. It makes no automatic page-crawling or catalogue-download requests.
+
+**Compare & watch** links back to `/?game=ID` using a validated numeric game ID. The search page loads the game detail through the normal API; visiting the link alone does not save a watch, change an existing target or trigger a watchlist refresh. A target is set through the existing explicit watchlist action.
 
 Purchase URLs are constructed only for the fixed `https://www.cheapshark.com/redirect?dealID=...` origin. Source deal IDs are decoded, validated and encoded once to avoid changing an already encoded ID. The backend never follows these links; navigation happens only when the user selects an offer.
 
@@ -58,6 +73,8 @@ Closing a browser tab leaves this local worker running. Selecting **Quit app** s
 | Search input | 1–120 Unicode code points; control characters rejected |
 | Search cache | 128 entries, LRU eviction, 15-minute TTL |
 | Game-detail cache | 128 entries, LRU eviction, 15-minute TTL |
+| Discovery-page cache | 128 entries, LRU eviction, 15-minute TTL; keyed by normalized budget, store, order and page |
+| Discovery page | At most 30 raw store offers; page number 0–1000 |
 | Store metadata | 24-hour TTL |
 | Upstream response | At most 1 MiB, strict UTF-8 and JSON parsing |
 | Upstream connect timeout | Three seconds |
@@ -83,10 +100,10 @@ Transport errors, invalid provider payloads and non-success responses are surfac
 | Observed state | Meaning |
 | --- | --- |
 | `ready` | No successful price lookup or provider failure has yet been observed in this process. |
-| `healthy` | The latest completed uncached price lookup succeeded. |
+| `healthy` | The latest completed uncached provider lookup succeeded. |
 | `degraded` (HTTP 503) | A provider lookup failed, or the service has closed. |
 
-An uncached successful search or complete game lookup sets `lastSuccessAt`. A failure sets `lastFailureAt` and records the error. Serving fresh or stale cached data does not restore health after an observed failure. An old success does not establish the provider's current availability; timestamps make that limitation explicit.
+An uncached successful search, complete game lookup, discovery page or explicit store-metadata lookup sets `lastSuccessAt`. A failure sets `lastFailureAt` and records the error. Serving fresh or stale cached data does not restore health after an observed failure. An old success does not establish the provider's current availability; timestamps make that limitation explicit. Successful metadata or discovery requests do not replace the independent search-and-offers workflow validation.
 
 The companion monitor's `game-price-search.properties` checks readiness, observed provider health and the opt-in validated workflow. All three targets belong to the same app. Its one-second probe schedule reads local state and never becomes a provider polling schedule.
 
@@ -104,7 +121,7 @@ The app binds to `127.0.0.1`, validates the request Host and same-origin browser
 
 The client uses Java's HTTP/1.1 implementation and does not follow upstream redirects. On Windows, when explicit JVM trust-store properties are absent, it loads the existing `Windows-ROOT` certificates into a TLS context scoped to this client. The portable runtime includes `jdk.crypto.mscapi`. Other operating systems and explicitly configured JVM trust stores use their default configuration. Certificate and hostname validation remain enabled; the app does not change system trust stores.
 
-Interactive game queries and IDs, IDs selected for watchlist refreshes and the fixed Portal workflow lookups when enabled are sent to CheapShark. Price targets, notification acknowledgments and the watchlist file remain local. General runtime price caches are not written to disk; the watchlist persists only its bounded per-game observations and alert state.
+Interactive game queries and IDs, discovery budgets/store/order/page choices, IDs selected for watchlist refreshes and the fixed Portal workflow lookups when enabled are sent to CheapShark. A discovery budget is a separate browsing filter, not a saved price target. Price targets, notification acknowledgments and the watchlist file remain local; discovery requests do not include the user's watchlist state. The browser-only minimum-discount filter is not sent to the provider. General runtime price caches, including discovery pages, are not written to disk; the watchlist persists only its bounded per-game observations and alert state.
 
 ## Verification boundaries
 

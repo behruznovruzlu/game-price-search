@@ -11,6 +11,7 @@ import com.google.gson.Strictness;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -61,6 +62,7 @@ public final class GamePriceService implements AutoCloseable {
     private final ReentrantLock requestLock = new ReentrantLock();
     private final Map<String, CacheEntry> searches = lruCache();
     private final Map<String, CacheEntry> games = lruCache();
+    private final Map<String, CacheEntry> dealPages = lruCache();
     private Map<String, Store> stores;
     private Instant storesFetchedAt;
     private volatile Instant lastSuccessAt;
@@ -74,6 +76,7 @@ public final class GamePriceService implements AutoCloseable {
     private volatile long upstreamFailures;
     private volatile int cachedSearches;
     private volatile int cachedGames;
+    private volatile int cachedDealPages;
     private volatile boolean lastAttemptFailed;
     private volatile boolean closed;
 
@@ -228,6 +231,113 @@ public final class GamePriceService implements AutoCloseable {
         }));
     }
 
+    /** Fetches one provider page only. Filtering a page can leave fewer than 30 visible deals. */
+    public String deals(BigDecimal maxPrice, String storeId, String sort, int page) {
+        ensureOpen();
+        if (maxPrice != null && (maxPrice.signum() < 0 || maxPrice.compareTo(MAX_PRICE) > 0
+                || maxPrice.stripTrailingZeros().scale() > 2))
+            throw invalid("Choose a maximum USD price from 0 to 1000000 with at most two decimal places.");
+        String selectedStore = storeId == null || storeId.isEmpty() || storeId.equals("all") ? "" : storeId;
+        if (!selectedStore.isEmpty() && !selectedStore.matches("[1-9][0-9]{0,19}"))
+            throw invalid("Choose a valid store ID.");
+        String order = sort == null || sort.isEmpty() ? "rating" : sort;
+        String ordering = switch (order) {
+            case "rating" -> "sortBy=DealRating&desc=0";
+            case "discount" -> "sortBy=Savings&desc=0";
+            case "price" -> "sortBy=Price&desc=0";
+            case "recent" -> "sortBy=Recent&desc=0";
+            default -> throw invalid("Choose a valid deal sort order.");
+        };
+        if (page < 0 || page > 1000) throw invalid("Choose a deal page from 0 to 1000.");
+        String canonicalPrice = maxPrice == null ? "" : maxPrice.stripTrailingZeros().toPlainString();
+        String key = canonicalPrice + ":" + selectedStore + ":" + order + ":" + page;
+        StringBuilder path = new StringBuilder("deals?pageNumber=").append(page)
+                .append("&pageSize=30&onSale=1&").append(ordering);
+        if (!selectedStore.isEmpty()) path.append("&storeID=").append(selectedStore);
+        if (maxPrice != null) {
+            // CheapShark treats upperPrice=50 as unlimited. The local exact-price check is authoritative.
+            BigDecimal ceiling = maxPrice.setScale(0, RoundingMode.CEILING);
+            if (ceiling.compareTo(new BigDecimal("50")) != 0) path.append("&upperPrice=").append(ceiling.toPlainString());
+        }
+        return locked(() -> cached(dealPages, key, false, () -> {
+            Map<String, Store> metadata = loadStores();
+            JsonArray upstream = array(fetch(path.toString()));
+            if (upstream.size() > 30) throw malformed();
+            JsonArray matches = new JsonArray();
+            for (JsonElement element : upstream) {
+                JsonObject item = object(element);
+                String itemStoreId = identifier(item, "storeID");
+                Store store = metadata.get(itemStoreId);
+                if (store == null) throw malformed();
+                BigDecimal onSale = amount(item, "isOnSale", BigDecimal.ONE);
+                if (!(onSale.compareTo(BigDecimal.ZERO) == 0 || onSale.compareTo(BigDecimal.ONE) == 0)) throw malformed();
+                if (!store.active() || onSale.signum() == 0 || !selectedStore.isEmpty() && !selectedStore.equals(itemStoreId)) continue;
+                BigDecimal sale = amount(item, "salePrice", MAX_PRICE);
+                BigDecimal normal = amount(item, "normalPrice", MAX_PRICE);
+                if (sale.compareTo(normal) >= 0 || maxPrice != null && sale.compareTo(maxPrice) > 0) continue;
+                BigDecimal savings = amount(item, "savings", new BigDecimal("100"));
+                if (savings.signum() == 0) continue;
+                JsonObject deal = new JsonObject();
+                deal.addProperty("id", identifier(item, "gameID"));
+                deal.addProperty("title", title(item, "title"));
+                deal.addProperty("steamAppId", optionalIdentifier(item, "steamAppID"));
+                deal.addProperty("storeId", itemStoreId);
+                deal.addProperty("storeName", store.name());
+                deal.addProperty("salePrice", sale);
+                deal.addProperty("normalPrice", normal);
+                deal.addProperty("savings", savings);
+                deal.addProperty("dealRating", amount(item, "dealRating", BigDecimal.TEN));
+                deal.addProperty("dealUrl", dealUrl(text(item, "dealID", 2048)));
+                matches.add(deal);
+            }
+            JsonObject result = new JsonObject();
+            result.addProperty("page", page);
+            result.addProperty("pageSize", 30);
+            // This is a continuation hint, not a provider total or a promise of another matching deal.
+            result.addProperty("hasMore", upstream.size() == 30);
+            result.add("deals", matches);
+            return result;
+        }));
+    }
+
+    /** Active store choices share the same bounded, validated metadata used for game offers. */
+    public String stores() {
+        ensureOpen();
+        return locked(() -> {
+            boolean hit = stores != null && clock.instant().isBefore(storesFetchedAt.plus(Duration.ofHours(24)));
+            try {
+                Map<String, Store> metadata = loadStores();
+                if (hit) cacheHits++;
+                else {
+                    lastSuccessAt = storesFetchedAt;
+                    lastAttemptFailed = false;
+                    lastError = null;
+                }
+                return response(activeStores(metadata), hit, false, "");
+            } catch (ServiceException error) {
+                if (stores == null) throw error;
+                staleResponses++;
+                return response(activeStores(stores), true, true,
+                        error.getMessage() + " Showing previously fetched store choices.");
+            }
+        });
+    }
+
+    private CacheEntry activeStores(Map<String, Store> metadata) {
+        JsonArray values = new JsonArray();
+        metadata.entrySet().stream().filter(entry -> entry.getValue().active())
+                .sorted(Map.Entry.comparingByKey(Comparator.comparing(BigInteger::new)))
+                .forEach(entry -> {
+                    JsonObject store = new JsonObject();
+                    store.addProperty("id", entry.getKey());
+                    store.addProperty("name", entry.getValue().name());
+                    values.add(store);
+                });
+        JsonObject result = new JsonObject();
+        result.add("stores", values);
+        return new CacheEntry(result, storesFetchedAt);
+    }
+
     /** Reports local observations; it never probes or spends the upstream rate limit. */
     public String health() {
         JsonObject value = new JsonObject();
@@ -242,6 +352,7 @@ public final class GamePriceService implements AutoCloseable {
         value.addProperty("staleResponses", staleResponses);
         value.addProperty("cachedSearches", cachedSearches);
         value.addProperty("cachedGames", cachedGames);
+        value.addProperty("cachedDealPages", cachedDealPages);
         value.addProperty("retryAfterSeconds", remainingCooldown());
         return JSON.toJson(value);
     }
@@ -259,6 +370,7 @@ public final class GamePriceService implements AutoCloseable {
             cache.put(key, loaded);
             cachedSearches = searches.size();
             cachedGames = games.size();
+            cachedDealPages = dealPages.size();
             lastSuccessAt = loaded.at();
             lastAttemptFailed = false;
             lastError = null;
