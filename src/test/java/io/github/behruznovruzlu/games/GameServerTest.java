@@ -136,8 +136,8 @@ class GameServerTest {
             var service = new GamePriceService(URI.create("http://127.0.0.1:1/"), Clock.systemUTC(), Duration.ofMinutes(15), Duration.ZERO);
             assertThrows(BindException.class, () -> new GameServer(port, service));
             assertEquals(503, assertThrows(GamePriceService.ServiceException.class, () -> service.search("Example")).status());
-            assertThrows(BindException.class, () -> Main.createServer(new Main.Options(port, true, false, false, temporary)));
-            try (var fallback = Main.createServer(new Main.Options(port, false, false, false, temporary))) {
+            assertThrows(BindException.class, () -> Main.createServer(new Main.Options(port, true, false, false, temporary, false)));
+            try (var fallback = Main.createServer(new Main.Options(port, false, false, false, temporary, false))) {
                 assertNotEquals(port, fallback.port());
                 assertTrue(fallback.port() > 0);
             }
@@ -145,13 +145,15 @@ class GameServerTest {
     }
 
     @Test void acceptsOnlyGameApplicationStartupOptions() {
-        assertEquals(new Main.Options(8090, false, false, false, Main.defaultDataDirectory()), Main.parseOptions(new String[0]));
-        assertEquals(new Main.Options(0, true, true, false, Main.defaultDataDirectory()), Main.parseOptions(new String[]{"--open-browser", "--port", "0"}));
+        assertEquals(new Main.Options(8090, false, false, false, Main.defaultDataDirectory(), false), Main.parseOptions(new String[0]));
+        assertEquals(new Main.Options(0, true, true, false, Main.defaultDataDirectory(), false), Main.parseOptions(new String[]{"--open-browser", "--port", "0"}));
+        assertTrue(Main.parseOptions(new String[]{"--workflow-check"}).workflowCheck());
         assertEquals(temporary, Main.parseOptions(new String[]{"--data-dir", temporary.toString()}).dataDir());
         assertTrue(Main.parseOptions(new String[]{"--help"}).help());
         for (String[] options : List.of(new String[]{"--data-dir"}, new String[]{"--data-dir", " "}, new String[]{"--docs", "anything"},
                 new String[]{"--port"}, new String[]{"--port", "70000"}, new String[]{"--port", "wrong"},
                 new String[]{"--data-dir", "one", "--data-dir", "two"},
+                new String[]{"--workflow-check", "--workflow-check"},
                 new String[]{"--port", "0", "--port", "0"}, new String[]{"--open-browser", "--open-browser"}))
             assertThrows(IllegalArgumentException.class, () -> Main.parseOptions(options));
     }
@@ -198,6 +200,36 @@ class GameServerTest {
         }
     }
 
+    @Test void exposesValidatedWorkflowStateWithoutRunningChecksOnEveryRead() throws Exception {
+        try (var disabled = new Fixture(false)) {
+            var response = disabled.get("/api/games/workflow");
+            assertEquals(503, response.statusCode());
+            assertEquals("disabled", JsonParser.parseString(response.body()).getAsJsonObject().get("status").getAsString());
+            assertEquals(0, disabled.calls.get());
+        }
+        for (boolean correctContents : List.of(false, true)) {
+            try (var fixture = new Fixture(false, null, true, correctContents)) {
+                String wanted = correctContents ? "healthy" : "failed";
+                long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+                HttpResponse<String> report = null;
+                while (System.nanoTime() < deadline) {
+                    report = fixture.get("/api/games/workflow");
+                    var snapshot = JsonParser.parseString(report.body()).getAsJsonObject();
+                    if (!snapshot.get("running").getAsBoolean() && snapshot.get("status").getAsString().equals(wanted)) break;
+                    Thread.sleep(20);
+                }
+                assertNotNull(report);
+                assertEquals(wanted, JsonParser.parseString(report.body()).getAsJsonObject().get("status").getAsString());
+                assertEquals(correctContents ? 200 : 503, report.statusCode());
+                assertEquals(200, fixture.get("/api/games/readiness").statusCode(), "An invalid search response is distinct from an unreachable backend.");
+                int observedCalls = fixture.calls.get();
+                for (int index = 0; index < 5; index++) fixture.get("/api/games/workflow");
+                assertEquals(400, fixture.get("/api/games/workflow?force=1").statusCode());
+                assertEquals(observedCalls, fixture.calls.get(), "Monitoring polls must only read the completed report.");
+            }
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         final AtomicInteger calls = new AtomicInteger();
         final HttpServer upstream;
@@ -211,6 +243,10 @@ class GameServerTest {
         }
 
         Fixture(boolean failure, Path dataDir) throws Exception {
+            this(failure, dataDir, false, false);
+        }
+
+        Fixture(boolean failure, Path dataDir, boolean workflowEnabled, boolean correctWorkflowContents) throws Exception {
             upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             upstream.createContext("/", exchange -> {
                 calls.incrementAndGet();
@@ -221,6 +257,7 @@ class GameServerTest {
                 else if (exchange.getRequestURI().getQuery().startsWith("id="))
                     body = "{\"info\":{\"title\":\"Example & Game\",\"steamAppID\":\"570\"},\"cheapestPriceEver\":{\"price\":\"4.99\",\"date\":1704067200},\"deals\":[{\"storeID\":\"1\",\"dealID\":\"offer\",\"price\":\"9.99\",\"retailPrice\":\"19.99\",\"savings\":\"50\"}]}";
                 else body = "[{\"gameID\":\"123\",\"steamAppID\":\"570\",\"external\":\"Example & Game\",\"cheapest\":\"9.99\",\"cheapestDealID\":\"offer\"}]";
+                if (correctWorkflowContents) body = body.replace("Example & Game", "Portal");
                 byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
                 try (exchange) {
@@ -231,7 +268,8 @@ class GameServerTest {
             upstream.start();
             service = new GamePriceService(URI.create("http://127.0.0.1:" + upstream.getAddress().getPort() + "/"),
                     Clock.systemUTC(), Duration.ofMinutes(15), Duration.ZERO);
-            server = new GameServer(0, service, dataDir == null ? null : new WatchlistService(dataDir, service));
+            server = new GameServer(0, service, dataDir == null ? null : new WatchlistService(dataDir, service),
+                    workflowEnabled ? new PriceWorkflowCheck(service) : null);
             server.start();
             base = "http://127.0.0.1:" + server.port();
         }

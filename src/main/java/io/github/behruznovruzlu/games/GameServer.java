@@ -31,6 +31,7 @@ public final class GameServer implements AutoCloseable {
     private final ThreadPoolExecutor executor;
     private final GamePriceService games;
     private final WatchlistService watchlist;
+    private final PriceWorkflowCheck workflow;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile Runnable shutdownAction = () -> {};
 
@@ -44,8 +45,13 @@ public final class GameServer implements AutoCloseable {
     }
 
     GameServer(int port, GamePriceService games, WatchlistService watchlist) throws IOException {
+        this(port, games, watchlist, null);
+    }
+
+    GameServer(int port, GamePriceService games, WatchlistService watchlist, PriceWorkflowCheck workflow) throws IOException {
         this.games = java.util.Objects.requireNonNull(games, "games");
         this.watchlist = watchlist;
+        this.workflow = workflow;
         HttpServer created = null;
         ThreadPoolExecutor workers = null;
         try {
@@ -62,11 +68,16 @@ public final class GameServer implements AutoCloseable {
             if (workers != null) workers.shutdownNow();
             games.close();
             if (watchlist != null) watchlist.close();
+            if (workflow != null) workflow.close();
             throw error;
         }
     }
 
-    public void start() { server.start(); if (watchlist != null) watchlist.start(); }
+    public void start() {
+        server.start();
+        if (watchlist != null) watchlist.start();
+        if (workflow != null) workflow.start();
+    }
     public int port() { return server.getAddress().getPort(); }
     public void onShutdown(Runnable action) { shutdownAction = java.util.Objects.requireNonNull(action); }
 
@@ -106,6 +117,13 @@ public final class GameServer implements AutoCloseable {
                         case "/games.js" -> resource(exchange, "/web/games.js", "text/javascript");
                         case "/games.css" -> resource(exchange, "/web/games.css", "text/css");
                         case "/api/games/search", "/api/games/game", "/api/games/health" -> gameRequest(exchange, path);
+                        case "/api/games/workflow" -> {
+                            parameters(exchange.getRequestURI().getRawQuery(), List.of());
+                            String body = workflow == null ? "{\"status\":\"disabled\",\"running\":false,\"query\":\"Portal\",\"error\":null}"
+                                    : workflow.snapshot();
+                            boolean healthy = JsonParser.parseString(body).getAsJsonObject().get("status").getAsString().equals("healthy");
+                            send(exchange, healthy ? 200 : 503, "application/json", body);
+                        }
                         case "/api/watchlist" -> {
                             parameters(exchange.getRequestURI().getRawQuery(), List.of());
                             if (watchlist == null) send(exchange, 503, "application/json", "{\"error\":\"Watchlist is unavailable\"}");
@@ -268,6 +286,7 @@ public final class GameServer implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) return;
         server.stop(0);
         executor.shutdownNow();
+        if (workflow != null) workflow.close();
         if (watchlist != null) watchlist.close();
         games.close();
         try { executor.awaitTermination(3, TimeUnit.SECONDS); }

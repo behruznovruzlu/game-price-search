@@ -46,6 +46,7 @@ The server binds to IPv4 loopback and checks local Host/Origin headers. It is in
 | `GET /api/games/game?id=82` | Fetch a game's offers, join store names and sort by price. |
 | `GET /api/games/readiness` | Check local backend readiness without contacting CheapShark. |
 | `GET /api/games/health` | Read the last observed provider result and cache/failure counters. |
+| `GET /api/games/workflow` | Read the latest opt-in search-and-offers validation; HTTP 200 only for a recent passing check. |
 | `POST /api/shutdown` | Stop the application; requires `X-App-Action: change`. |
 | `GET /api/watchlist` | Read saved targets, observed prices, unread alerts and refresh state without querying the provider. |
 | `POST /api/watchlist` | Save `{id,title,targetPrice}`; a null target saves without an alert. |
@@ -59,9 +60,23 @@ Provider health starts as `ready`: the app is reachable, but no successful looku
 
 These health observations include timestamps; they do not continuously prove that CheapShark is available. Both health routes are local snapshots and never initiate provider requests.
 
-The companion **Service Reliability Monitor** can use its `config/game-price-search.properties` file to monitor local readiness and last-observed provider health. They are two checks of one application. Its recurring probes do not generate game searches or follow purchase links.
+The companion **Service Reliability Monitor** can use its `config/game-price-search.properties` file to monitor readiness, last-observed provider health and the opt-in workflow report. These are three checks of one application. Its recurring probes do not generate game searches or follow purchase links; enable `--workflow-check` when using the workflow target.
 
 The client uses bounded caches and response sizes, a six-second deadline per upstream request, serialized request spacing and cooldowns. HTTP 429 respects `Retry-After`. See [the architecture](docs/architecture.md) for the data flow and limits.
+
+### Validate a real price-search workflow
+
+Run with `--workflow-check` to enable an asynchronous check on startup and every 15 minutes:
+
+```sh
+java -jar target/game-price-search-1.0.0.jar --workflow-check
+```
+
+The check searches for **Portal**, requires the expected title, fetches that game's offers and verifies at least one active store offer with a valid USD price. Search and game-detail lookups bypass the application's price cache and stale fallback while sharing its request spacing, limits and provider cooldowns. Store metadata can use its existing cache. Purchase redirects are never followed. This validates the backend/provider workflow, not browser JavaScript, checkout or every catalogue title.
+
+The local `/api/games/workflow` report includes stage durations, offer count, last completed check, last success, next scheduled check and validity deadline. Reading it never initiates an external request. Only a passing check less than 20 minutes old returns HTTP 200. Disabled, not-yet-verified, failed or expired checks return HTTP 503; a new failed check immediately invalidates an earlier pass. A busy local lookup defers validation for 30 seconds and does not itself count as a provider failure.
+
+The combined game/monitor launcher enables validation and adds a third **Validated price workflow** target. A not-yet-completed initial check can temporarily show unavailable/Down while the backend readiness target passes; inspect the game page's **Live search validation** panel for its precise state. Standalone startup leaves this external check disabled unless explicitly requested. The ordinary one-second monitor probes still read local snapshots only.
 
 ## Windows package
 

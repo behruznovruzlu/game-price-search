@@ -208,6 +208,60 @@ class GamePriceServiceTest {
         assertEquals(2, requests.get());
     }
 
+    @Test void workflowLookupsBypassFreshCachesAndUpdateTheOrdinaryCachedResult() {
+        JsonObject initialSearch = json(service.search("Example"));
+        service.game("123");
+        assertEquals(3, requests.get());
+        clock.advance(Duration.ofMinutes(1));
+
+        JsonObject freshSearch = json(service.freshSearch("Example"));
+        JsonObject freshGame = json(service.freshGame("123"));
+        assertEquals(5, requests.get(), "Both workflow stages must make a new provider request, while store metadata can be reused.");
+        assertFalse(freshSearch.get("cached").getAsBoolean());
+        assertFalse(freshGame.get("cached").getAsBoolean());
+        assertFalse(freshSearch.get("stale").getAsBoolean());
+        assertFalse(freshGame.get("stale").getAsBoolean());
+        assertNotEquals(initialSearch.get("fetchedAt"), freshSearch.get("fetchedAt"));
+        assertEquals(freshSearch.get("fetchedAt"), json(service.search("Example")).get("fetchedAt"));
+        assertEquals(freshGame.get("fetchedAt"), json(service.game("123")).get("fetchedAt"));
+        assertEquals(5, requests.get());
+    }
+
+    @Test void freshWorkflowSearchDoesNotHideFailureBehindItsWarmCacheOrIgnoreCooldown() {
+        service.search("Example");
+        responder.set(exchange -> new Reply(429, "rate limited", Map.of("Retry-After", "17")));
+        var failed = assertThrows(GamePriceService.ServiceException.class, () -> service.freshSearch("Example"));
+        assertEquals(503, failed.status());
+        assertFalse(failed.isBusy());
+        assertEquals(17, failed.retryAfterSeconds());
+        for (int attempt = 0; attempt < 5; attempt++) {
+            assertThrows(GamePriceService.ServiceException.class, () -> service.freshSearch("Example"));
+            assertThrows(GamePriceService.ServiceException.class, () -> service.freshGame("123"));
+        }
+        assertEquals(2, requests.get(), "Cooldown must bound workflow requests as well as interactive requests.");
+        assertEquals(0, json(service.health()).get("staleResponses").getAsLong());
+        assertEquals("degraded", json(service.health()).get("status").getAsString());
+
+        clock.advance(Duration.ofSeconds(18));
+        responder.set(exchange -> new Reply(200, SEARCH));
+        assertFalse(json(service.freshSearch("Example")).get("cached").getAsBoolean());
+        assertEquals(3, requests.get());
+        assertEquals("healthy", json(service.health()).get("status").getAsString());
+    }
+
+    @Test void freshWorkflowDetailsNeverTreatStaleFallbackAsASuccessfulObservation() {
+        JsonObject initial = json(service.game("123"));
+        clock.advance(Duration.ofMinutes(16));
+        responder.set(exchange -> new Reply(503, "unavailable"));
+        assertEquals(502, assertThrows(GamePriceService.ServiceException.class, () -> service.freshGame("123")).status());
+        assertEquals(3, requests.get());
+        assertEquals(0, json(service.health()).get("staleResponses").getAsLong());
+        JsonObject ordinary = json(service.game("123"));
+        assertTrue(ordinary.get("stale").getAsBoolean(), "Interactive browsing can still use the previous price with a warning.");
+        assertEquals(initial.get("fetchedAt"), ordinary.get("fetchedAt"));
+        assertEquals(3, requests.get());
+    }
+
     @Test void doesNotShortenLongOrOverflowingRetryAfterValues() {
         responder.set(exchange -> new Reply(429, "rate limited", Map.of("Retry-After", "172800")));
         assertEquals(172800, assertThrows(GamePriceService.ServiceException.class, () -> service.search("Example")).retryAfterSeconds());
@@ -271,13 +325,14 @@ class GamePriceServiceTest {
             var first = executor.submit(() -> service.search("Example"));
             assertTrue(arrived.await(3, TimeUnit.SECONDS));
             var second = executor.submit(() -> assertThrows(GamePriceService.ServiceException.class,
-                    () -> service.search("Example")));
+                    () -> service.freshSearch("Example")));
             var localHealth = executor.submit(() -> service.health());
             try {
                 assertEquals("ready", json(localHealth.get(500, TimeUnit.MILLISECONDS)).get("status").getAsString());
                 var busy = second.get(1, TimeUnit.SECONDS);
                 assertEquals(503, busy.status());
                 assertEquals(1, busy.retryAfterSeconds());
+                assertTrue(busy.isBusy());
                 assertEquals(0, json(service.health()).get("upstreamFailures").getAsLong());
                 assertTrue(json(service.health()).get("lastFailureAt").isJsonNull());
             }

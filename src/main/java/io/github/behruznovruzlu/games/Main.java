@@ -10,7 +10,7 @@ import java.util.concurrent.CountDownLatch;
 public final class Main {
     private Main() { }
 
-    record Options(int port, boolean portSpecified, boolean openBrowser, boolean help, Path dataDir) { }
+    record Options(int port, boolean portSpecified, boolean openBrowser, boolean help, Path dataDir, boolean workflowCheck) { }
 
     public static void main(String[] args) {
         boolean openBrowser = List.of(args).contains("--open-browser");
@@ -32,6 +32,7 @@ public final class Main {
                 System.out.println("Game Price Search: " + address);
                 System.out.println("Compare PC game store prices supplied in USD by CheapShark. Internet access is required.");
                 System.out.println("Watchlist data: " + options.dataDir().toAbsolutePath().normalize());
+                System.out.println("Live search validation: " + (options.workflowCheck() ? "enabled (every 15 minutes)" : "disabled"));
                 if (options.openBrowser()) browse(address);
                 stop.await();
             } finally {
@@ -56,6 +57,7 @@ public final class Main {
         boolean help = false;
         Path dataDir = defaultDataDirectory();
         boolean dataSpecified = false;
+        boolean workflowCheck = false;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--help" -> help = true;
@@ -77,28 +79,35 @@ public final class Main {
                     dataDir = Path.of(args[i]);
                     dataSpecified = true;
                 }
+                case "--workflow-check" -> {
+                    if (workflowCheck) throw new IllegalArgumentException("Duplicate --workflow-check option");
+                    workflowCheck = true;
+                }
                 default -> throw new IllegalArgumentException("Unknown option: " + args[i]);
             }
         }
-        return new Options(port, portSpecified, openBrowser, help, dataDir);
+        return new Options(port, portSpecified, openBrowser, help, dataDir, workflowCheck);
     }
 
     static GameServer createServer(Options options) throws java.io.IOException {
-        try { return createServer(options.port(), options.dataDir()); }
+        try { return createServer(options.port(), options.dataDir(), options.workflowCheck()); }
         catch (BindException error) {
             if (options.portSpecified()) throw error;
-            return createServer(0, options.dataDir());
+            return createServer(0, options.dataDir(), options.workflowCheck());
         }
     }
 
-    private static GameServer createServer(int port, Path dataDir) throws java.io.IOException {
+    private static GameServer createServer(int port, Path dataDir, boolean workflowEnabled) throws java.io.IOException {
         GamePriceService games = new GamePriceService();
         WatchlistService watchlist = null;
+        PriceWorkflowCheck workflow = null;
         try {
             watchlist = new WatchlistService(dataDir, games);
-            return new GameServer(port, games, watchlist);
+            if (workflowEnabled) workflow = new PriceWorkflowCheck(games);
+            return new GameServer(port, games, watchlist, workflow);
         } catch (java.io.IOException | RuntimeException error) {
             if (watchlist != null) watchlist.close();
+            if (workflow != null) workflow.close();
             games.close();
             throw error;
         }
@@ -129,6 +138,7 @@ public final class Main {
                                     Use 0 to request a free port explicitly
                   --help            Show this help
                   --data-dir PATH   Persistent watchlist directory; defaults to this user's application data
+                  --workflow-check  Validate a real Portal search and offers on startup and every 15 minutes
                 Game prices are supplied in USD by the online CheapShark API.
                 Watchlists and target-price alerts are saved on this computer, independently of the port.
                 Price checks run every 30 minutes while the app is running. Alerts are shown in the app.

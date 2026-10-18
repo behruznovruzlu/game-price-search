@@ -17,7 +17,10 @@
     watchAlerts: byId("watch-alerts"), alertLink: byId("alert-link"), alertCount: byId("alert-count"),
     watchForm: byId("watch-form"), targetPrice: byId("target-price"), watchSave: byId("watch-save"),
     watchImport: byId("watch-import"), watchImportCopy: byId("watch-import-copy"), watchImportButton: byId("watch-import-button"),
-    storageNote: byId("watch-storage-note")
+    storageNote: byId("watch-storage-note"), workflowState: byId("workflow-state"), workflowSummary: byId("workflow-summary"),
+    workflowQuery: byId("workflow-query"), workflowChecked: byId("workflow-checked"), workflowNext: byId("workflow-next"),
+    workflowSearchMs: byId("workflow-search-ms"), workflowOffersMs: byId("workflow-offers-ms"), workflowOfferCount: byId("workflow-offer-count"),
+    workflowError: byId("workflow-error"), workflowSuccess: byId("workflow-success")
   };
   const SAVED_KEY = "game-price-search.saved.v1";
   const MAX_SAVED = 50;
@@ -31,6 +34,8 @@
   let renderedWatchItems = "";
   let legacySaved = [];
   let legacyRaw = null;
+  let workflowController = null;
+  let workflowSnapshot = null;
   let games = [];
   let selectedGame = null;
   let selectedDetail = null;
@@ -346,6 +351,59 @@
       catch (error) { message(`Your games were imported, but the price check could not start: ${error.message}`); }
     } catch (error) { message(`Import could not be completed: ${error.message}`); }
     finally { await loadWatchlist(true); watchBusy = false; setWatchControls(); }
+  }
+
+  function renderWorkflow(data, unreachable = false) {
+    let state = unreachable ? "unreachable" : data.status;
+    const validUntil = data?.validUntil ? new Date(data.validUntil).getTime() : NaN;
+    if (state === "healthy" && (!Number.isFinite(validUntil) || validUntil <= Date.now())) state = "stale";
+    const labels = {disabled: "Off", unverified: "Not checked yet", healthy: "Passing", failed: "Failed", stale: "Out of date", unreachable: "Unreachable"};
+    const running = !unreachable && data?.running === true;
+    ui.workflowState.textContent = `${labels[state]}${running ? " · Checking…" : ""}`;
+    ui.workflowState.dataset.state = state;
+    const summaries = {
+      disabled: "Scheduled search validation is off for this session.",
+      unverified: running ? "The first scheduled search and store-offer check is running." : "Waiting for the first scheduled search and store-offer check.",
+      healthy: "The latest live search and store-offer check passed.",
+      failed: "The latest search and store-offer check did not pass.",
+      stale: "The last result has expired. A fresh successful check is needed.",
+      unreachable: "The local app could not be reached. Any check details shown below are from the last response and may be outdated."
+    };
+    ui.workflowSummary.textContent = `${summaries[state]}${running && state !== "unverified" ? " A new check is running." : ""}`;
+    const duration = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${Math.round(value).toLocaleString()} ms` : "—";
+    ui.workflowQuery.textContent = typeof data?.query === "string" ? data.query.slice(0, 120) : "—";
+    ui.workflowChecked.textContent = dateText(data?.checkedAt) || "Not checked yet";
+    ui.workflowNext.textContent = unreachable ? "Unconfirmed" : dateText(data?.nextCheckAt) || "Not scheduled";
+    ui.workflowSearchMs.textContent = duration(data?.searchMs);
+    ui.workflowOffersMs.textContent = duration(data?.offersMs);
+    ui.workflowOfferCount.textContent = Number.isSafeInteger(data?.offerCount) && data.offerCount >= 0 ? String(data.offerCount) : "—";
+    const error = typeof data?.error === "string" ? data.error.trim().slice(0, 500) : "";
+    ui.workflowError.textContent = error ? `${unreachable ? "Last reported error" : "Check error"}: ${error}` : "";
+    ui.workflowError.hidden = !error;
+    const successAt = dateText(data?.lastSuccessAt);
+    ui.workflowSuccess.textContent = successAt ? `Last successful validation: ${successAt}.` : "";
+    ui.workflowSuccess.hidden = !successAt;
+  }
+
+  async function loadWorkflow() {
+    if (shuttingDown || workflowController) return;
+    const controller = new AbortController();
+    workflowController = controller;
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch("/api/games/workflow", {signal: controller.signal, headers: {Accept: "application/json"}, cache: "no-store"});
+      if (response.status !== 200 && response.status !== 503) throw new Error("Workflow state unavailable");
+      const data = await response.json();
+      if (!data || !["disabled", "unverified", "healthy", "failed", "stale"].includes(data.status)) throw new Error("Workflow response unreadable");
+      if (shuttingDown) return;
+      workflowSnapshot = data;
+      renderWorkflow(data);
+    } catch {
+      if (!shuttingDown) renderWorkflow(workflowSnapshot, true);
+    } finally {
+      clearTimeout(timeout);
+      workflowController = null;
+    }
   }
 
   async function requestJson(url, signal, options = {}) {
@@ -686,6 +744,11 @@
       shuttingDown = true;
       clearInterval(watchTimer);
       watchController?.abort();
+      workflowController?.abort();
+      ui.workflowState.textContent = "Paused";
+      ui.workflowState.dataset.state = "disabled";
+      ui.workflowSummary.textContent = "The app has stopped. Reopen it to resume scheduled validation.";
+      ui.workflowNext.textContent = "App stopped";
       setWatchControls();
       ui.watchStatus.textContent = "App stopped. Price checks are paused.";
       ui.storageNote.textContent = "Your watchlist is saved on this computer. Reopen the app to resume price checks.";
@@ -717,5 +780,6 @@
   readLegacySaved();
   renderSaved();
   loadWatchlist();
-  watchTimer = setInterval(() => loadWatchlist(), 5000);
+  loadWorkflow();
+  watchTimer = setInterval(() => { loadWatchlist(); loadWorkflow(); }, 5000);
 })();

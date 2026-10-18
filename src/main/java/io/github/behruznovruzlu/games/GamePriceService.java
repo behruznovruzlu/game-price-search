@@ -138,6 +138,15 @@ public final class GamePriceService implements AutoCloseable {
 
     /** Bounded serial access prevents a lookup burst from occupying every local HTTP worker. */
     public String search(String query) {
+        return search(query, false);
+    }
+
+    /** The opt-in workflow check must observe the provider, not a previous cached success. */
+    String freshSearch(String query) {
+        return search(query, true);
+    }
+
+    private String search(String query, boolean fresh) {
         ensureOpen();
         if (query == null) throw invalid("Enter a game title.");
         String normalized = query.strip().replaceAll("\\s+", " ");
@@ -145,7 +154,7 @@ public final class GamePriceService implements AutoCloseable {
                 || normalized.codePoints().anyMatch(Character::isISOControl))
             throw invalid("Enter a game title between 1 and 120 characters.");
         String resolved = GTA_FIVE_ALIAS.matcher(normalized).matches() ? "Grand Theft Auto V" : normalized;
-        return locked(() -> cached(searches, normalized, () -> {
+        return locked(() -> cached(searches, normalized, fresh, () -> {
             JsonArray upstream = array(fetch("games?title=" + encode(resolved) + "&limit=30&exact=0"));
             if (upstream.size() > 60) throw malformed();
             JsonArray matches = new JsonArray();
@@ -168,9 +177,17 @@ public final class GamePriceService implements AutoCloseable {
     }
 
     public String game(String id) {
+        return game(id, false);
+    }
+
+    String freshGame(String id) {
+        return game(id, true);
+    }
+
+    private String game(String id, boolean fresh) {
         ensureOpen();
         if (id == null || !id.matches("[1-9][0-9]{0,19}")) throw invalid("Choose a valid game ID.");
-        return locked(() -> cached(games, id, () -> {
+        return locked(() -> cached(games, id, fresh, () -> {
             Map<String, Store> metadata = loadStores();
             JsonObject upstream = object(fetch("games?id=" + id));
             JsonObject info = object(required(upstream, "info"));
@@ -229,9 +246,9 @@ public final class GamePriceService implements AutoCloseable {
         return JSON.toJson(value);
     }
 
-    private String cached(Map<String, CacheEntry> cache, String key, Loader loader) {
+    private String cached(Map<String, CacheEntry> cache, String key, boolean fresh, Loader loader) {
         CacheEntry entry = cache.get(key);
-        if (entry != null && clock.instant().isBefore(entry.at().plus(cacheTtl))) {
+        if (!fresh && entry != null && clock.instant().isBefore(entry.at().plus(cacheTtl))) {
             cacheHits++;
             return response(entry, true, false, "");
         }
@@ -247,7 +264,7 @@ public final class GamePriceService implements AutoCloseable {
             lastError = null;
             return response(loaded, false, false, "");
         } catch (ServiceException error) {
-            if (entry != null) {
+            if (!fresh && entry != null) {
                 staleResponses++;
                 return response(entry, true, true, error.getMessage() + " Showing previously fetched prices; verify the current price at the store.");
             }
@@ -258,7 +275,7 @@ public final class GamePriceService implements AutoCloseable {
     private String locked(Supplier<String> lookup) {
         try {
             if (!requestLock.tryLock(150, TimeUnit.MILLISECONDS))
-                throw new ServiceException(503, "Another price lookup is in progress. Please retry shortly.", 1);
+                throw new ServiceException(503, "Another price lookup is in progress. Please retry shortly.", 1, true);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new ServiceException(503, "The price request was interrupted. Please try again.", 1);
@@ -473,13 +490,19 @@ public final class GamePriceService implements AutoCloseable {
     public static final class ServiceException extends RuntimeException {
         private final int status;
         private final long retryAfterSeconds;
+        private final boolean busy;
         public ServiceException(int status, String message, long retryAfterSeconds) {
+            this(status, message, retryAfterSeconds, false);
+        }
+        ServiceException(int status, String message, long retryAfterSeconds, boolean busy) {
             super(message);
             this.status = status;
             this.retryAfterSeconds = retryAfterSeconds;
+            this.busy = busy;
         }
         public int status() { return status; }
         public long retryAfterSeconds() { return retryAfterSeconds; }
+        public boolean isBusy() { return busy; }
     }
 
     private record Store(String name, boolean active) { }

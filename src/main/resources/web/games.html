@@ -53,6 +53,22 @@
         </aside>
       </div>
 
+      <section class="workflow-panel" aria-labelledby="workflow-title">
+        <div class="workflow-heading"><div><p class="eyebrow">SEARCH RELIABILITY</p><h2 id="workflow-title">Live search validation</h2></div><span id="workflow-state" class="workflow-state" role="status" aria-live="polite">Loading status…</span></div>
+        <p id="workflow-summary" class="workflow-summary">Reading the latest scheduled check.</p>
+        <dl class="workflow-metrics">
+          <div><dt>Search title</dt><dd id="workflow-query">—</dd></div>
+          <div><dt>Last checked</dt><dd id="workflow-checked">—</dd></div>
+          <div><dt>Next check</dt><dd id="workflow-next">—</dd></div>
+          <div><dt>Search response</dt><dd id="workflow-search-ms">—</dd></div>
+          <div><dt>Store-offer response</dt><dd id="workflow-offers-ms">—</dd></div>
+          <div><dt>Active offers</dt><dd id="workflow-offer-count">—</dd></div>
+        </dl>
+        <p id="workflow-error" class="workflow-error" hidden></p>
+        <p id="workflow-success" class="workflow-last-success" hidden></p>
+        <p class="workflow-note">When enabled, the app validates a live catalogue search and its store-offer data every 15 minutes while running. Timings cover these API requests; they do not measure a browser visit or checkout.</p>
+      </section>
+
       <section id="game-detail" class="detail-panel" aria-labelledby="detail-title" hidden tabindex="-1">
         <div class="detail-top"><div><p class="eyebrow">STORE COMPARISON</p><h2 id="detail-title">Game details</h2></div><div class="detail-actions"><button type="button" id="save-button" class="secondary-button" disabled>Watch price</button><button type="button" id="close-detail" class="icon-button" aria-label="Close game details">×</button></div></div>
         <p id="detail-status" class="section-status" role="status" aria-live="polite"></p>

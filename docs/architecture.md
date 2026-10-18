@@ -13,6 +13,9 @@ flowchart LR
     Server --> Watchlist[WatchlistService]
     Watchlist --> Service
     Watchlist --> Saved[Local watchlist JSON]
+    Workflow[Opt-in PriceWorkflowCheck] --> Service
+    Monitor --> Report[Local workflow report]
+    Report --> Workflow
     Monitor[Service Reliability Monitor] --> Health[Local readiness and observed health]
     Health --> Service
 ```
@@ -21,6 +24,7 @@ flowchart LR
 - `GameServer` serves the three web assets and validates HTTP methods, input and the local request boundary.
 - `GamePriceService` owns provider requests, JSON validation, store joins, caching and observed provider health.
 - `WatchlistService` owns up to 50 persisted games, optional price targets, periodic checks and in-app alert state.
+- `PriceWorkflowCheck` validates a fixed real search and its offers on a separate bounded schedule when enabled.
 - `games.js` renders results, filters returned offers and polls the local watchlist snapshot every five seconds. This UI polling does not query CheapShark.
 
 A title search calls `games?title=...&limit=30&exact=0` on the fixed CheapShark API origin. Selecting a numeric game ID loads its details and store metadata. The service joins store IDs to names, excludes inactive stores and sorts offers with `BigDecimal` prices and deterministic ties. Store and maximum-price filters operate on those returned offers in the browser.
@@ -84,7 +88,15 @@ Transport errors, invalid provider payloads and non-success responses are surfac
 
 An uncached successful search or complete game lookup sets `lastSuccessAt`. A failure sets `lastFailureAt` and records the error. Serving fresh or stale cached data does not restore health after an observed failure. An old success does not establish the provider's current availability; timestamps make that limitation explicit.
 
-The companion monitor's `game-price-search.properties` checks local readiness and this observed health snapshot. It can record a backend process outage separately from an observed provider problem. Both targets belong to the same app; the monitor is not measuring two independently deployed services. Its probe schedule never becomes a provider polling schedule.
+The companion monitor's `game-price-search.properties` checks readiness, observed provider health and the opt-in validated workflow. All three targets belong to the same app. Its one-second probe schedule reads local state and never becomes a provider polling schedule.
+
+## Scheduled workflow validation
+
+`--workflow-check` enables a fresh Portal search followed by a detail lookup on startup and every 15 minutes after completion. The checker requires the exact expected title, a matching numeric game ID, USD data and at least one active store offer with a valid price. It measures search and offer stages separately. It validates this backend/provider path, not all titles, browser JavaScript or store checkout.
+
+Internal `freshSearch` and `freshGame` methods bypass both the price cache and stale fallback, then refresh the caches after success. They retain the same serialized lookup gate, response bounds, request spacing and provider cooldowns as interactive requests. Store metadata retains its existing 24-hour cache. A busy gate defers the check by 30 seconds without inventing a provider failure. Checks cannot overlap.
+
+`/api/games/workflow` only reads the checker snapshot. A completed pass is healthy for 20 minutes; a later failed check invalidates it immediately, while an overdue pass becomes stale. Disabled, initial/unverified, failed and stale states return HTTP 503; only a still-valid completed pass returns 200. Monitoring may therefore show an unavailable validation target during startup even while backend readiness passes. The browser panel exposes the precise state, age, next check and errors. No synthetic check runs unless explicitly enabled, and shutdown closes its scheduler.
 
 ## Local HTTP and TLS boundaries
 
@@ -92,7 +104,7 @@ The app binds to `127.0.0.1`, validates the request Host and same-origin browser
 
 The client uses Java's HTTP/1.1 implementation and does not follow upstream redirects. On Windows, when explicit JVM trust-store properties are absent, it loads the existing `Windows-ROOT` certificates into a TLS context scoped to this client. The portable runtime includes `jdk.crypto.mscapi`. Other operating systems and explicitly configured JVM trust stores use their default configuration. Certificate and hostname validation remain enabled; the app does not change system trust stores.
 
-Interactive game queries and IDs, plus IDs selected for watchlist refreshes, are sent to CheapShark. Price targets, notification acknowledgments and the watchlist file remain local. General runtime price caches are not written to disk; the watchlist persists only its bounded per-game observations and alert state.
+Interactive game queries and IDs, IDs selected for watchlist refreshes and the fixed Portal workflow lookups when enabled are sent to CheapShark. Price targets, notification acknowledgments and the watchlist file remain local. General runtime price caches are not written to disk; the watchlist persists only its bounded per-game observations and alert state.
 
 ## Verification boundaries
 
