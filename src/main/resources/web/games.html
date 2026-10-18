@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="Compare PC game prices from authorised stores, explore current offers and keep a personal shortlist.">
+  <meta name="description" content="Compare PC game prices from authorised stores, explore current offers and track target prices in a persistent watchlist.">
   <title>Game Price Search — Find your next good deal</title>
   <link rel="stylesheet" href="/games.css">
   <script src="/games.js" defer></script>
@@ -14,11 +14,11 @@
   <div class="shell">
     <header class="topbar">
       <a class="brand" href="/" aria-label="Game Price Search home"><span class="brand-mark" aria-hidden="true">g<span>↗</span></span><span>Game Price<span class="brand-sub">Search</span></span></a>
-      <div class="header-actions"><button id="health-button" type="button" class="quiet-button"><span class="status-dot" id="health-dot" aria-hidden="true"></span><span id="health-label">Check connection</span></button><button id="quit-button" type="button" class="quiet-button quit-button">Quit app</button></div>
+      <div class="header-actions"><a id="alert-link" class="alert-link" href="#saved-title" aria-label="View price alerts" hidden><span aria-hidden="true">●</span> <span id="alert-count">0</span> alerts</a><button id="health-button" type="button" class="quiet-button"><span class="status-dot" id="health-dot" aria-hidden="true"></span><span id="health-label">Check connection</span></button><button id="quit-button" type="button" class="quiet-button quit-button">Quit app</button></div>
     </header>
     <main id="main-content">
       <section class="hero" aria-labelledby="page-title">
-        <div class="hero-copy"><p class="eyebrow">PC GAMES · AUTHORISED STORES</p><h1 id="page-title">Good games.<br><span>Better prices.</span></h1><p class="hero-description">Find a game. Compare store offers. Keep the ones worth coming back for.</p></div>
+        <div class="hero-copy"><p class="eyebrow">PC GAMES · AUTHORISED STORES</p><h1 id="page-title">Good games.<br><span>Better prices.</span></h1><p class="hero-description">Find a game. Compare store offers. Track the prices you want to come back for.</p></div>
         <div class="hero-note"><span class="note-label">ONE SEARCH, MORE CHOICE</span><p>Steam, GOG and other authorised PC game stores, with prices supplied by CheapShark.</p><span class="currency-label">All prices in USD</span></div>
       </section>
 
@@ -42,28 +42,35 @@
         </section>
 
         <aside class="saved-panel" aria-labelledby="saved-title">
-          <div class="section-heading"><div><p class="eyebrow">FOR LATER</p><h2 id="saved-title">Your shortlist</h2></div><span class="count-pill" id="saved-count">0</span></div>
-          <p class="saved-description">A few games to keep an eye on.</p>
-          <ul id="saved-list" class="saved-list" aria-label="Saved games"></ul>
-          <p id="saved-empty" class="saved-empty">Open a game and select <strong>Save game</strong> to keep it here.</p>
-          <p class="storage-note">Saved in this browser. Open a saved game to check its latest offers.</p>
+          <div class="section-heading"><div><p class="eyebrow">PRICE WATCH</p><h2 id="saved-title" tabindex="-1">Your watchlist</h2></div><span class="count-pill" id="saved-count">0</span></div>
+          <p class="saved-description">Pick your price. Come back when it is right.</p>
+          <div id="watch-alerts" class="watch-alerts" role="status" aria-live="polite" hidden></div>
+          <div class="watch-toolbar"><button id="watch-refresh" type="button" class="watch-button" disabled>Check prices</button><span id="watch-status" role="status" aria-live="polite">Loading watchlist…</span></div>
+          <div id="watch-import" class="watch-import" hidden><p id="watch-import-copy"></p><button id="watch-import-button" type="button" class="watch-button">Import saved games</button></div>
+          <ul id="saved-list" class="saved-list" aria-label="Watched games"></ul>
+          <p id="saved-empty" class="saved-empty">Open a game and select <strong>Watch price</strong> to save it with an optional target price.</p>
+          <p id="watch-storage-note" class="storage-note">Saved on this computer, across app restarts and port changes. Checks run every 30 minutes while the app is running. Alerts appear here when you open this page.</p>
         </aside>
       </div>
 
       <section id="game-detail" class="detail-panel" aria-labelledby="detail-title" hidden tabindex="-1">
-        <div class="detail-top"><div><p class="eyebrow">STORE COMPARISON</p><h2 id="detail-title">Game details</h2></div><div class="detail-actions"><button type="button" id="save-button" class="secondary-button" disabled>Save game</button><button type="button" id="close-detail" class="icon-button" aria-label="Close game details">×</button></div></div>
+        <div class="detail-top"><div><p class="eyebrow">STORE COMPARISON</p><h2 id="detail-title">Game details</h2></div><div class="detail-actions"><button type="button" id="save-button" class="secondary-button" disabled>Watch price</button><button type="button" id="close-detail" class="icon-button" aria-label="Close game details">×</button></div></div>
         <p id="detail-status" class="section-status" role="status" aria-live="polite"></p>
         <div class="cache-notice" id="detail-cache" hidden></div>
         <div id="detail-content" hidden>
+          <form id="watch-form" class="watch-form" hidden>
+            <div><label for="target-price">Your target price in USD</label><p id="target-hint">Leave blank to save the game without an alert. In-app alerts appear at or below your target while the app is running.</p></div>
+            <div class="watch-form-actions"><span class="price-input"><span aria-hidden="true">$</span><input id="target-price" name="targetPrice" type="number" inputmode="decimal" min="0" max="1000000" step="0.01" placeholder="No target" aria-describedby="target-hint"><span>USD</span></span><button id="watch-save" type="submit" class="secondary-button">Save to watchlist</button></div>
+          </form>
           <div class="detail-summary"><div><span class="summary-label">BEST AVAILABLE OFFER</span><strong id="best-price">—</strong><span id="best-store" class="summary-caption"></span></div><div><span class="summary-label">LOWEST RECORDED PRICE</span><strong id="lowest-price">—</strong><span id="lowest-date" class="summary-caption">Recorded by CheapShark; not a price guarantee.</span></div><div class="summary-info"><span class="summary-label">BEFORE YOU BUY</span><p>Check the store page for activation platform, region restrictions and the final checkout price.</p></div></div>
-          <div class="offer-toolbar"><h3>Compare offers <span id="offer-count"></span></h3><div class="offer-filters"><label for="store-filter">Store <select id="store-filter"><option value="all">All stores</option></select></label><label for="price-filter">Max price <span class="price-input"><span aria-hidden="true">$</span><input id="price-filter" type="number" inputmode="decimal" min="0" max="100000" step="0.01" placeholder="Any" aria-label="Maximum price in USD"><span>USD</span></span></label></div></div>
+          <div class="offer-toolbar"><h3>Compare offers <span id="offer-count"></span></h3><div class="offer-filters"><label for="store-filter">Store <select id="store-filter"><option value="all">All stores</option></select></label><label for="price-filter">Max price <span class="price-input"><span aria-hidden="true">$</span><input id="price-filter" type="number" inputmode="decimal" min="0" max="1000000" step="0.01" placeholder="Any" aria-label="Maximum price in USD"><span>USD</span></span></label></div></div>
           <div class="table-wrap"><table class="offers-table"><caption class="sr-only">Store offers for the selected game. All prices in US dollars.</caption><thead><tr><th scope="col">Store</th><th scope="col">Price <span>USD</span></th><th scope="col">Saving</th><th scope="col"><span class="sr-only">Visit offer</span></th></tr></thead><tbody id="offers-body"></tbody></table></div>
           <p id="offers-empty" class="offers-empty" hidden>No offers match your filters.</p>
           <p class="offer-footnote">Offers open on CheapShark and redirect to the store. Listed savings are compared with the store's regular price.</p>
         </div>
       </section>
     </main>
-    <footer><a class="footer-brand" href="https://www.cheapshark.com/" target="_blank" rel="noopener noreferrer">Price data by CheapShark <span aria-hidden="true">↗</span></a><p>Prices are supplied in USD and typically refresh about hourly. Confirm availability and price at checkout.</p><span class="footer-local">YOUR SHORTLIST, ON THIS BROWSER.</span></footer>
+    <footer><a class="footer-brand" href="https://www.cheapshark.com/" target="_blank" rel="noopener noreferrer">Price data by CheapShark <span aria-hidden="true">↗</span></a><p>Prices are supplied in USD and typically refresh about hourly. Confirm availability and price at checkout.</p><span class="footer-local">YOUR WATCHLIST, ON THIS COMPUTER.</span></footer>
   </div>
 </body>
 </html>

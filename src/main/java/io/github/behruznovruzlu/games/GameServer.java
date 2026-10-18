@@ -2,10 +2,16 @@ package io.github.behruznovruzlu.games;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonObject;
+import com.google.gson.Strictness;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
+import java.io.StringReader;
+import java.math.BigDecimal;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
@@ -18,12 +24,13 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Browser application and read-only price API, available only through IPv4 loopback. */
+/** Browser application, read-only price lookups and local watches, available only through IPv4 loopback. */
 public final class GameServer implements AutoCloseable {
     private static final Gson JSON = new Gson();
     private final HttpServer server;
     private final ThreadPoolExecutor executor;
     private final GamePriceService games;
+    private final WatchlistService watchlist;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile Runnable shutdownAction = () -> {};
 
@@ -33,7 +40,12 @@ public final class GameServer implements AutoCloseable {
 
     /** Takes ownership of the client, including when binding the requested port fails. */
     GameServer(int port, GamePriceService games) throws IOException {
+        this(port, games, null);
+    }
+
+    GameServer(int port, GamePriceService games, WatchlistService watchlist) throws IOException {
         this.games = java.util.Objects.requireNonNull(games, "games");
+        this.watchlist = watchlist;
         HttpServer created = null;
         ThreadPoolExecutor workers = null;
         try {
@@ -49,11 +61,12 @@ public final class GameServer implements AutoCloseable {
             if (created != null) created.stop(0);
             if (workers != null) workers.shutdownNow();
             games.close();
+            if (watchlist != null) watchlist.close();
             throw error;
         }
     }
 
-    public void start() { server.start(); }
+    public void start() { server.start(); if (watchlist != null) watchlist.start(); }
     public int port() { return server.getAddress().getPort(); }
     public void onShutdown(Runnable action) { shutdownAction = java.util.Objects.requireNonNull(action); }
 
@@ -82,6 +95,8 @@ public final class GameServer implements AutoCloseable {
                     parameters(exchange.getRequestURI().getRawQuery(), List.of());
                     send(exchange, 200, "application/json", "{\"stopped\":true}");
                     shutdown = true;
+                } else if (method.equals("POST") && (path.equals("/api/watchlist") || path.startsWith("/api/watchlist/"))) {
+                    watchlistRequest(exchange, path);
                 } else if (!method.equals("GET")) {
                     exchange.getResponseHeaders().set("Allow", path.equals("/api/shutdown") ? "POST" : "GET");
                     send(exchange, 405, "application/json", "{\"error\":\"Unsupported method\"}");
@@ -91,6 +106,11 @@ public final class GameServer implements AutoCloseable {
                         case "/games.js" -> resource(exchange, "/web/games.js", "text/javascript");
                         case "/games.css" -> resource(exchange, "/web/games.css", "text/css");
                         case "/api/games/search", "/api/games/game", "/api/games/health" -> gameRequest(exchange, path);
+                        case "/api/watchlist" -> {
+                            parameters(exchange.getRequestURI().getRawQuery(), List.of());
+                            if (watchlist == null) send(exchange, 503, "application/json", "{\"error\":\"Watchlist is unavailable\"}");
+                            else send(exchange, 200, "application/json", watchlist.snapshot());
+                        }
                         case "/api/games/readiness" -> {
                             parameters(exchange.getRequestURI().getRawQuery(), List.of());
                             send(exchange, 200, "application/json", "{\"status\":\"ready\"}");
@@ -104,6 +124,76 @@ public final class GameServer implements AutoCloseable {
         } finally {
             if (shutdown) shutdownAction.run();
         }
+    }
+
+    private void watchlistRequest(HttpExchange exchange, String path) throws IOException {
+        parameters(exchange.getRequestURI().getRawQuery(), List.of());
+        if (!singleHeaderMatches(exchange, "X-App-Action", "change", false)) {
+            send(exchange, 403, "application/json", "{\"error\":\"Action header required\"}");
+            return;
+        }
+        if (watchlist == null) {
+            send(exchange, 503, "application/json", "{\"error\":\"Watchlist is unavailable\"}");
+            return;
+        }
+        try {
+            JsonObject input = jsonBody(exchange);
+            String body;
+            switch (path) {
+                case "/api/watchlist" -> {
+                    requireKeys(input, List.of("id", "title", "targetPrice"));
+                    BigDecimal target = null;
+                    if (input.has("targetPrice") && !input.get("targetPrice").isJsonNull()) {
+                        if (!input.get("targetPrice").isJsonPrimitive() || !input.getAsJsonPrimitive("targetPrice").isNumber())
+                            throw new IllegalArgumentException("Target price must be a number or null");
+                        target = input.get("targetPrice").getAsBigDecimal();
+                    }
+                    body = watchlist.upsert(stringValue(input, "id"), stringValue(input, "title"), target);
+                }
+                case "/api/watchlist/remove", "/api/watchlist/acknowledge" -> {
+                    requireKeys(input, List.of("id"));
+                    body = path.endsWith("/remove") ? watchlist.remove(stringValue(input, "id"))
+                            : watchlist.acknowledge(stringValue(input, "id"));
+                }
+                case "/api/watchlist/refresh" -> {
+                    requireKeys(input, List.of());
+                    boolean accepted = watchlist.requestRefresh();
+                    send(exchange, accepted ? 202 : 409, "application/json", "{\"checking\":true}");
+                    return;
+                }
+                default -> { send(exchange, 404, "application/json", "{\"error\":\"Not found\"}"); return; }
+            }
+            send(exchange, 200, "application/json", body);
+        } catch (IllegalStateException error) {
+            send(exchange, 500, "application/json", "{\"error\":\"The watchlist could not be saved. Check the application data directory.\"}");
+        }
+    }
+
+    private static JsonObject jsonBody(HttpExchange exchange) throws IOException {
+        String type = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (type == null || !type.split(";", 2)[0].strip().equalsIgnoreCase("application/json"))
+            throw new IllegalArgumentException("Use an application/json body");
+        byte[] bytes = exchange.getRequestBody().readNBytes(8193);
+        if (bytes.length > 8192) throw new IllegalArgumentException("Request body is too large");
+        try (JsonReader reader = new JsonReader(new StringReader(new String(bytes, StandardCharsets.UTF_8)))) {
+            reader.setStrictness(Strictness.STRICT);
+            var value = JsonParser.parseReader(reader);
+            if (!value.isJsonObject() || reader.peek() != JsonToken.END_DOCUMENT)
+                throw new IllegalArgumentException("Use a JSON object");
+            return value.getAsJsonObject();
+        } catch (IOException | com.google.gson.JsonParseException error) {
+            throw new IllegalArgumentException("Use a valid JSON object");
+        }
+    }
+
+    private static void requireKeys(JsonObject value, List<String> allowed) {
+        if (!allowed.containsAll(value.keySet())) throw new IllegalArgumentException("Unknown request field");
+    }
+
+    private static String stringValue(JsonObject value, String key) {
+        if (!value.has(key) || !value.get(key).isJsonPrimitive() || !value.getAsJsonPrimitive(key).isString())
+            throw new IllegalArgumentException("Missing text field: " + key);
+        return value.get(key).getAsString();
     }
 
     private void gameRequest(HttpExchange exchange, String path) throws IOException {
@@ -178,6 +268,7 @@ public final class GameServer implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) return;
         server.stop(0);
         executor.shutdownNow();
+        if (watchlist != null) watchlist.close();
         games.close();
         try { executor.awaitTermination(3, TimeUnit.SECONDS); }
         catch (InterruptedException error) { Thread.currentThread().interrupt(); }

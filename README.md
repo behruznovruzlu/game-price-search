@@ -1,6 +1,6 @@
 # Game Price Search
 
-A local Java application for finding PC games and comparing store offers through the **CheapShark API**. Search a title, compare prices, filter offers and save games to revisit in your browser.
+A local Java application for finding PC games and comparing store offers through the **CheapShark API**. Search a title, compare prices, filter offers and track target prices in a persistent watchlist.
 
 ## Use the application
 
@@ -9,8 +9,9 @@ Extract the complete Windows portable package, then double-click **`GamePriceSea
 1. Search for a game, such as **Portal**.
 2. Select a result to see its current offers and lowest recorded price.
 3. Filter by store or maximum price, then use **View deal** to open the purchase link.
-4. Save games to keep a personal list of up to 50 titles.
-5. Select **Quit app** when finished. Closing the browser tab alone leaves the local server running.
+4. Select **Watch price**, enter an optional target in USD and save the game. The watchlist holds up to 50 titles.
+5. Use **Check prices** for an immediate check, or leave the application running for scheduled checks every 30 minutes. When a fresh observed price meets your target, an unread in-app alert appears. **Mark alert as read** acknowledges it.
+6. Select **Quit app** when finished. Closing the browser tab alone leaves the local server running.
 
 Prices are supplied in **USD**, without currency conversion. The lowest recorded price is historical data from CheapShark, not a prediction. Check the store's current price, regional availability and terms before purchasing.
 
@@ -18,7 +19,11 @@ The catalogue may list games under their full names and specific editions; it do
 
 New lookups require an internet connection. Searches run when requested; recently fetched results can be reused from memory. If a refresh fails, an available older response is shown with its original timestamp and a warning. The price cache is cleared when the app stops.
 
-Saved games use this browser's local storage for this app address. Clearing site data, private browsing or changing the port can remove or separate that list. Saving a game does not enable background price monitoring or email alerts.
+The watchlist, targets, last known prices and alert acknowledgements are saved on this computer, independently of the browser or port. The default Windows directory is `%LOCALAPPDATA%/GamePriceSearch`; other systems use `~/.game-price-search`. Use `--data-dir data` to select another directory. Only one running application can own a given data directory. Keep this personal state outside source control and distribution packages.
+
+Checks and alerts run while the application is running. They are not an always-on service and do not send email or operating-system notifications. Reopening the app checks existing saved games. The UI shows the price observation timestamp separately from the latest attempted check. Failed or stale provider responses retain the last known price with an error and cannot raise a new alert. Acknowledged alerts do not repeat while the price remains below the same target; a later rise and drop can alert again.
+
+If this browser has a shortlist from an older version, **Import saved games** moves it into the persistent watchlist. Existing targets are preserved and the old browser copy is kept until every import is confirmed. An old shortlist stored under another port must be imported from that browser address.
 
 ## Build and run
 
@@ -42,6 +47,13 @@ The server binds to IPv4 loopback and checks local Host/Origin headers. It is in
 | `GET /api/games/readiness` | Check local backend readiness without contacting CheapShark. |
 | `GET /api/games/health` | Read the last observed provider result and cache/failure counters. |
 | `POST /api/shutdown` | Stop the application; requires `X-App-Action: change`. |
+| `GET /api/watchlist` | Read saved targets, observed prices, unread alerts and refresh state without querying the provider. |
+| `POST /api/watchlist` | Save `{id,title,targetPrice}`; a null target saves without an alert. |
+| `POST /api/watchlist/remove` | Remove `{id}` from the watchlist. |
+| `POST /api/watchlist/acknowledge` | Mark the alert for `{id}` as read. |
+| `POST /api/watchlist/refresh` | Queue one bounded asynchronous refresh; returns 202, or 409 if already checking/empty. |
+
+Watchlist mutations require `Content-Type: application/json` and `X-App-Action: change`, reject unknown fields, and retain the same Host/Origin protections as shutdown. Saving a target alone does not query the provider. The UI explicitly requests a check after a user adds or edits a target; list polling is local. Price checks share the existing caches, request spacing and rate-limit cooldowns. The JSON state is size-limited and atomically replaced; write failures remain visible and do not discard the last persisted state.
 
 Provider health starts as `ready`: the app is reachable, but no successful lookup has been observed yet. A successful upstream lookup makes it `healthy`. An observed upstream failure makes it `degraded` with HTTP 503, even when older cached prices remain available. Cache reads do not erase an observed failure. A new successful upstream lookup restores provider health.
 

@@ -94,7 +94,7 @@ class PortableSmoke:
         # cmd /s /c requires enclosing quotes around the command. Environment
         # expansion occurs once inside quotes; delayed expansion is disabled.
         command = (subprocess.list2cmdline([comspec]) + ' /d /s /v:off /c '
-                   + f'""%GAME_PRICE_SMOKE_LAUNCHER%" --port {self.port}"')
+                   + f'""%GAME_PRICE_SMOKE_LAUNCHER%" --port {self.port} --data-dir "{self.evidence / "watchlist data"}""')
         self.process = subprocess.Popen(command, executable=comspec, cwd=self.evidence,
                                         env=environment, stdout=log, stderr=subprocess.STDOUT,
                                         creationflags=subprocess.CREATE_NO_WINDOW)

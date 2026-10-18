@@ -3,6 +3,7 @@ package io.github.behruznovruzlu.games;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.net.BindException;
 import java.net.InetAddress;
@@ -14,6 +15,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -24,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GameServerTest {
+    @TempDir Path temporary;
     @Test void validatesRequestsBeforeCallingTheProviderAndKeepsHealthChecksLocal() throws Exception {
         try (var fixture = new Fixture(true)) {
             for (String path : List.of("/api/games/health", "/api/games/readiness"))
@@ -133,8 +136,8 @@ class GameServerTest {
             var service = new GamePriceService(URI.create("http://127.0.0.1:1/"), Clock.systemUTC(), Duration.ofMinutes(15), Duration.ZERO);
             assertThrows(BindException.class, () -> new GameServer(port, service));
             assertEquals(503, assertThrows(GamePriceService.ServiceException.class, () -> service.search("Example")).status());
-            assertThrows(BindException.class, () -> Main.createServer(new Main.Options(port, true, false, false)));
-            try (var fallback = Main.createServer(new Main.Options(port, false, false, false))) {
+            assertThrows(BindException.class, () -> Main.createServer(new Main.Options(port, true, false, false, temporary)));
+            try (var fallback = Main.createServer(new Main.Options(port, false, false, false, temporary))) {
                 assertNotEquals(port, fallback.port());
                 assertTrue(fallback.port() > 0);
             }
@@ -142,13 +145,57 @@ class GameServerTest {
     }
 
     @Test void acceptsOnlyGameApplicationStartupOptions() {
-        assertEquals(new Main.Options(8090, false, false, false), Main.parseOptions(new String[0]));
-        assertEquals(new Main.Options(0, true, true, false), Main.parseOptions(new String[]{"--open-browser", "--port", "0"}));
+        assertEquals(new Main.Options(8090, false, false, false, Main.defaultDataDirectory()), Main.parseOptions(new String[0]));
+        assertEquals(new Main.Options(0, true, true, false, Main.defaultDataDirectory()), Main.parseOptions(new String[]{"--open-browser", "--port", "0"}));
+        assertEquals(temporary, Main.parseOptions(new String[]{"--data-dir", temporary.toString()}).dataDir());
         assertTrue(Main.parseOptions(new String[]{"--help"}).help());
-        for (String[] options : List.of(new String[]{"--data-dir", "anything"}, new String[]{"--docs", "anything"},
+        for (String[] options : List.of(new String[]{"--data-dir"}, new String[]{"--data-dir", " "}, new String[]{"--docs", "anything"},
                 new String[]{"--port"}, new String[]{"--port", "70000"}, new String[]{"--port", "wrong"},
+                new String[]{"--data-dir", "one", "--data-dir", "two"},
                 new String[]{"--port", "0", "--port", "0"}, new String[]{"--open-browser", "--open-browser"}))
             assertThrows(IllegalArgumentException.class, () -> Main.parseOptions(options));
+    }
+
+    @Test void persistsWatchTargetsAcrossPortsAndProtectsEveryMutation() throws Exception {
+        String item = "{\"id\":\"123\",\"title\":\"Example & Game\",\"targetPrice\":10.00}";
+        try (var fixture = new Fixture(false, temporary)) {
+            assertEquals(0, JsonParser.parseString(fixture.get("/api/watchlist").body()).getAsJsonObject().getAsJsonArray("items").size());
+            var unmarked = fixture.request("/api/watchlist").header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(item)).build();
+            assertEquals(403, fixture.send(unmarked).statusCode());
+            var foreign = fixture.request("/api/watchlist").header("Content-Type", "application/json")
+                    .header("X-App-Action", "change").header("Origin", "https://unrelated.example")
+                    .POST(HttpRequest.BodyPublishers.ofString(item)).build();
+            assertEquals(403, fixture.send(foreign).statusCode());
+            for (String invalid : List.of("[]", "{}", item + " trailing", item.replace("10.00", "-1"),
+                    item.replace("10.00", "\"10.00\""), item.replace("\"123\"", "\"0\""),
+                    item.replace("\"title\"", "\"unknown\""), " ".repeat(8193)))
+                assertEquals(400, fixture.post("/api/watchlist", invalid).statusCode(), invalid.substring(0, Math.min(80, invalid.length())));
+            assertEquals(200, fixture.post("/api/watchlist", item).statusCode());
+            assertEquals(0, fixture.calls.get(), "Saving a target does not spend the price provider's rate limit.");
+            assertEquals(202, fixture.post("/api/watchlist/refresh", "{}").statusCode());
+            long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            com.google.gson.JsonObject watched = null;
+            while (System.nanoTime() < deadline) {
+                watched = JsonParser.parseString(fixture.get("/api/watchlist").body()).getAsJsonObject().getAsJsonArray("items").get(0).getAsJsonObject();
+                if (watched.get("targetReached").getAsBoolean()) break;
+                Thread.sleep(20);
+            }
+            assertNotNull(watched);
+            assertEquals("9.99", watched.get("lastPrice").getAsString());
+            assertTrue(watched.get("targetReached").getAsBoolean());
+            assertTrue(watched.get("notificationUnread").getAsBoolean());
+            assertEquals(200, fixture.post("/api/watchlist/acknowledge", "{\"id\":\"123\"}").statusCode());
+            assertEquals(400, fixture.post("/api/watchlist/refresh", "{\"extra\":true}").statusCode());
+        }
+        try (var restarted = new Fixture(false, temporary)) {
+            var watched = JsonParser.parseString(restarted.get("/api/watchlist").body()).getAsJsonObject().getAsJsonArray("items").get(0).getAsJsonObject();
+            assertEquals("123", watched.get("id").getAsString());
+            assertEquals(0, new java.math.BigDecimal("10.00").compareTo(watched.get("targetPrice").getAsBigDecimal()));
+            assertFalse(watched.get("notificationUnread").getAsBoolean(), "Acknowledgements survive a restart at a different local URL.");
+            assertEquals(200, restarted.post("/api/watchlist/remove", "{\"id\":\"123\"}").statusCode());
+            assertEquals(0, JsonParser.parseString(restarted.get("/api/watchlist").body()).getAsJsonObject().getAsJsonArray("items").size());
+        }
     }
 
     private static final class Fixture implements AutoCloseable {
@@ -160,6 +207,10 @@ class GameServerTest {
         final String base;
 
         Fixture(boolean failure) throws Exception {
+            this(failure, null);
+        }
+
+        Fixture(boolean failure, Path dataDir) throws Exception {
             upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             upstream.createContext("/", exchange -> {
                 calls.incrementAndGet();
@@ -180,13 +231,17 @@ class GameServerTest {
             upstream.start();
             service = new GamePriceService(URI.create("http://127.0.0.1:" + upstream.getAddress().getPort() + "/"),
                     Clock.systemUTC(), Duration.ofMinutes(15), Duration.ZERO);
-            server = new GameServer(0, service);
+            server = new GameServer(0, service, dataDir == null ? null : new WatchlistService(dataDir, service));
             server.start();
             base = "http://127.0.0.1:" + server.port();
         }
 
         HttpRequest.Builder request(String path) { return HttpRequest.newBuilder(URI.create(base + path)).timeout(Duration.ofSeconds(10)); }
         HttpResponse<String> get(String path) throws Exception { return send(request(path).GET().build()); }
+        HttpResponse<String> post(String path, String body) throws Exception {
+            return send(request(path).header("Content-Type", "application/json").header("X-App-Action", "change")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build());
+        }
         HttpResponse<String> send(HttpRequest request) throws Exception {
             return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         }
