@@ -2,6 +2,14 @@
 
 A Java application for comparing PC game prices across stores listed by the CheapShark API. Search for a title, discover discounted games and track target prices in a persistent watchlist.
 
+## Demo
+
+Game search, store-price comparison and price-watch walkthrough.
+
+https://github.com/user-attachments/assets/de0aa542-bd20-48ed-81b0-851d53d69c2c
+
+
+
 ## Features
 
 - Game search with store-price comparison and the lowest price recorded by CheapShark.
